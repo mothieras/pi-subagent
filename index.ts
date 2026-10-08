@@ -86,7 +86,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	pi.registerMessageRenderer("subagent-complete", (message, _options, theme) => new Text(theme.fg("accent", typeof message.content === "string" ? message.content : "Background subagent completed"), 0, 0));
 	pi.registerTool({
 		name: "subagent", label: "Subagent", exposure: "model-only", parameters: SubagentParams,
-		description: "Delegate isolated tasks to any Markdown role or inline configuration. Exactly one of task, tasks (parallel), chain ({previous} substitution). Overrides configure model, thinking, role/base prompts and exact tools with explicit trusted sources. Default role scope user. background:true returns a session task ID and auto-notifies on completion. No recursive delegation. Parallel writers sharing a worktree require allowSharedWrites:true.",
+		description: "Delegate self-contained tasks using optional Markdown roles or inline config. Choose exactly one of task, tasks (independent parallel), chain (sequential; {previous} output). Built-in defaults inherit model/thinking and allow read,bash,edit,write. Children do not inherit parent conversation, skills or extensions/MCP; supply context and explicit trusted tool sources. For read-only work set config.tools to {allow:[read,grep,find,ls],extensions:[],mcp:[]}. Default role scope user. background:true returns a session task ID and auto-notifies. No recursive delegation or OS sandbox. Shared-worktree parallel writers require explicit allowSharedWrites:true.",
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const request = params as RunRequest;
 			const tasks = ensureManager(ctx);
@@ -124,7 +124,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	});
 	pi.registerTool({
 		name: "subagent_task", label: "Subagent Task", exposure: "model-only", annotations: { readOnlyHint: true }, parameters: TaskManagementParams,
-		description: "Manage session-local subagent tasks: list (includes complete extension usage totals), status, paginated result (view output or log), cancel. Queries/notifications never charge usage again. Results/logs are private temporary files, cleared on exit/switch/reload and bounded by retention limits. Native Pi /session totals do not include this extension's child calls.",
+		description: "Manage session-local subagent tasks: list (extension usage totals), status, result (output/log; page with returned nextCursor), cancel. taskId required except list. Queries/notifications do not duplicate usage. Results/logs are private temporary files, cleared on exit/switch/reload or retention eviction. Native Pi /session excludes child calls.",
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const tasks = ensureManager(ctx);
 			try {

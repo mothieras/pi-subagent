@@ -1,5 +1,7 @@
 # Subagent Example
 
+> Archived from the upstream example; see the [project documentation](../README.md) for this implementation.
+
 Delegate tasks to specialized subagents with isolated context windows.
 
 ## Features

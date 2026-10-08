@@ -1,53 +1,135 @@
-# 日常版本安装
+# Installation, upgrades, and rollback
 
-日常版基线：`v0.1.1`。版本号表示可复现的安装基线，不保证没有 bug；后续仍按测试、提交、发布、安装迭代。
+## Requirements
 
-## 固定发布版本，而不是跟随开发目录
+- Pi, with child processes able to resolve its model configuration and credentials.
+- The verified baseline is Pi 1.1.0 / Node.js 24 / macOS. Other platforms and real provider/subscription flows require manual verification.
+- Git for repository-based installs. This package is not currently published to npm.
 
-本机采用 Git detached worktree 发布目录：
+Only enable one implementation of `subagent` / `subagent_task`. If using Plan Mode, also keep only one `/plan` extension. Disable an older implementation before enabling this one, and record its previous configuration/link targets.
 
-```text
-~/.pi/agent/local-releases/pi-subagent/v0.1.1/
+## Install as a Pi package
+
+```bash
+pi install git:github.com/mothieras/pi-subagent
 ```
 
-该目录固定到发布 tag 的 commit，没有独立安装 node_modules；运行依赖由 Pi 宿主提供。日常版本代码不要直接修改。开发在 `~/projects/pi-subagent`，修改不会自动进入已安装版本。
+This tracks the default branch. To pin a reviewed tag or commit, append `@<ref>` to the source; Pi keeps versioned Git references pinned.
 
-安装资源：
+Package resources are:
 
-- `~/.pi/agent/extensions/subagent` → 发布目录。
-- `~/.pi/agent/extensions/plan-mode` → 发布目录的 `compat/plan-mode/`。
-- `~/.pi/agent/agents/{scout,planner,reviewer,worker}.md` → 发布角色文件。
-- `~/.pi/agent/prompts/{implement,implement-and-review,scout-and-plan}.md` → 发布 workflow。
+| Resource | Entry |
+| --- | --- |
+| Delegation tools | `index.ts` |
+| Workflow prompts | `prompts/` |
+| Delegation skill | `skills/pi-subagent/SKILL.md` |
 
-保留一个 subagent、一个 Plan Mode。不要同时启用旧实现或另外将本包加入 settings.packages，否则可能重复加载。旧 `pi-settings` 实现保留原样。
+Role files and the Plan Mode companion are optional and not installed by the package manifest. Prompts using named roles need those roles installed first.
 
-安装记录保存在 `~/.pi/agent/local-releases/pi-subagent/installations/`，不放在自动发现的 extensions 目录里。记录包含旧链接目标、发布版本/commit 和新增链接，供回滚用；不复制凭据。
+Use `pi list` to inspect configured packages and `pi config` to select resources. Do not also symlink the extension into the discovery directory: package and symlink installation are alternatives.
 
-## 激活
+### Local checkout
 
-安装链接切换后，当前 Pi 会话仍持有旧工具定义。完成当前回合后运行 `/reload`，或开启新 Pi 会话。
+```bash
+git clone https://github.com/mothieras/pi-subagent.git
+cd pi-subagent
+pi install "$PWD"
+```
 
-新版调用不再使用 `type: general/explore`，而是 `task` 或 `tasks` 或 `chain`，配合任意 `agent?` 和 `config?`。不自动继承父进程扩展/MCP。
+Local packages load directly from that path. Changes become available after reload; use a pinned checkout or the fixed-release layout below when development changes should not affect daily use.
 
-## 后续更新
+Installing/loading the extension does not require installing its development dependencies. Pi supplies the host packages at runtime.
 
-1. 在开发仓库修改、运行 `npm run check && npm test`，然后提交。
-2. 更新 package.json/lockfile 版本并建立新的发布 tag，不移动旧 tag。
-3. 创建新 worktree，例如：
-   ```sh
-   git worktree add --detach "$HOME/.pi/agent/local-releases/pi-subagent/v0.1.2" v0.1.2
-   ```
-4. 记录旧链接目标，将两项扩展和已安装示例角色/workflow 一起切到新版本。不要覆盖已有自定义角色/文件。
-5. 新会话检查实际模型、前后台、usage、Plan Mode；随后 `/reload` 使用新版。
+## Sample roles and workflows
 
-旧发布目录先保留。需要清理时用 `git worktree remove`，先确认没有安装链接或活动会话指向它；不要直接删除版本目录。
+From a reviewed checkout, copy optional roles without overwriting existing custom files:
 
-## 回滚
+```bash
+agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+mkdir -p "$agent_dir/agents"
+cp -n agents/*.md "$agent_dir/agents/"
+```
 
-从安装记录恢复旧 subagent 与 Plan Mode 链接；只移除仍指向该次发布、且由该次安装新增的角色/workflow 链接。不要删除或覆盖后来用户修改的文件。然后 `/reload` 或新开会话。
+`cp -n` skips existing files. On upgrades, review existing role files before updating them. Alternatively, manage explicit role symlinks to a fixed release and record their targets.
 
-回滚不会撤销模型已执行的文件修改、外部动作或用量。
+Installed roles enable these bundled prompts:
 
-## v0.1.1 安装修复
+| Command | Sequence |
+| --- | --- |
+| `/scout-and-plan <task>` | scout → planner |
+| `/implement <task>` | scout → planner → worker |
+| `/implement-and-review <task>` | worker → reviewer → worker |
 
-`v0.1.0` 的显式目录加载通过，但全局目录符号链接发现会使 `../plan-mode.ts` 从别名目录解析到错误位置。首次安装检查捕获后已回滚。`v0.1.1` 将 Plan Mode 实现放在目录内，不跨符号链接目录向上导入；新增真实 Pi 常规目录发现回归测试。保留原 tag/发布目录，不改写发布历史。
+No role installation is needed for inline delegation. The extension does not silently install example roles or load them from its own repository.
+
+## Optional Plan Mode companion
+
+The companion checks actual tool permissions and cancels writers when entering read-only mode.
+
+Try it from a checkout without changing persistent settings:
+
+```bash
+pi -e ./compat/plan-mode
+```
+
+For persistent use, configure `compat/plan-mode/` as an explicit extension path or link that directory into `<agent-dir>/extensions/plan-mode`. First disable any existing `/plan` extension and record its old target. The companion is not automatically loaded by `subagent` or the package manifest.
+
+Keep the directory intact. Its entry point intentionally does not import implementation code from outside the symlinked directory.
+
+## Fixed-release directory installation
+
+For a daily installation independent of the development checkout, create an immutable detached worktree at a release tag or commit. From the repository root:
+
+```bash
+agent_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+ref=$(git rev-parse HEAD)  # Or choose a reviewed release tag.
+release_dir="$agent_dir/local-releases/pi-subagent/$ref"
+mkdir -p "$(dirname "$release_dir")"
+git worktree add --detach "$release_dir" "$ref"
+```
+
+Load the whole release directory, not a lone `index.ts`: the extension imports several neighboring modules. A conventional directory layout is:
+
+```text
+<agent-dir>/
+├── extensions/
+│   ├── subagent -> <release-dir>/
+│   └── plan-mode -> <release-dir>/compat/plan-mode/  (optional)
+├── skills/
+│   └── pi-subagent -> <release-dir>/skills/pi-subagent/  (if present)
+├── agents/       (optional reviewed roles)
+└── prompts/      (optional workflow files or links)
+```
+
+Create links only at unoccupied destinations. If a destination already exists, inspect it, preserve its old target/content, and replace it only as part of an intentional upgrade. Avoid force-link commands that overwrite custom resources. Keep installation records outside automatically discovered resource directories; never copy credentials into them.
+
+A link under `extensions/` discovers the extension only; install the skill/prompts separately for this layout. Do not also register the same release as a Pi package.
+
+## Activate and verify
+
+Finish the current turn, then run `/reload` or start a new session. The existing session retains old tool definitions and skill metadata until reload.
+
+Verify:
+
+1. Exactly one `subagent`, one `subagent_task`, and at most one `/plan` are loaded.
+2. A no-role inline read-only task succeeds with the expected model and tools.
+3. Background completion wakes the parent and results are readable by task ID.
+4. Usage appears in `subagent_task` totals, not the native Pi `/session` ledger.
+5. If installed, `/skill:pi-subagent <task>` loads the delegation guide and named-role workflows find their roles.
+6. If installed, Plan Mode rejects writable/default tool loadouts and cancels existing writers.
+
+These checks may call a real model and incur usage; the repository's automated tests do not.
+
+## Upgrade
+
+- **Pinned package:** select a new reviewed tag/commit rather than moving an existing tag. Pi recognizes the same repository identity, so inspect the resulting declaration with `pi list`.
+- **Unpinned package:** `pi update git:github.com/mothieras/pi-subagent` reconciles the repository checkout.
+- **Local/fixed release:** prepare and verify the new checkout/worktree, record old link targets, then switch the extension and installed companion/roles/prompts/skill together. Record newly added resources separately.
+
+Preserve existing custom roles, prompts, and skills. Reload or start a new session and repeat the verification checklist. Keep the old release while any links or active sessions still reference it; remove unused worktrees with `git worktree remove` only after checking those references.
+
+## Rollback
+
+Restore the previous package declaration or recorded link targets. Remove only resources added by the failed installation that still point to that installation; retain files customized since then. Reload or start a new session.
+
+Rollback/cancellation does not undo code changes, external actions, or model usage. Results and running tasks do not survive reload; save important findings first.
