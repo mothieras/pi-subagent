@@ -124,7 +124,7 @@ for (const busy of [false, true]) test(`real parent RPC automatically wakes on b
 		if (parentCalls === 2 && busy) await delay(1200);
 		return { content: parentCalls >= 3 ? "parent automatically woke" : "parent continued" };
 	});
-	const root = spawn(process.execPath, [path.resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--offline", "-e", path.resolve("index.ts"), "--model", "fake/test", "--thinking", "off", "--tools", "subagent,subagent_task"], { cwd: f.cwd, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } });
+	const root = spawn(process.execPath, [path.resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--offline", "-e", path.resolve("index.ts"), "-e", path.resolve("compat/plan-mode"), "--plan", "--model", "fake/test", "--thinking", "off", "--tools", "subagent,subagent_task"], { cwd: f.cwd, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } });
 	let closed = false; const exit = new Promise<void>((resolve) => root.on("close", () => { closed = true; resolve(); }));
 	let stderr = ""; let buffer = ""; const records: any[] = [];
 	root.stderr.on("data", (chunk) => { stderr += String(chunk); });

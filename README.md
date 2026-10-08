@@ -2,7 +2,7 @@
 
 独立维护的 Pi subagent 扩展：Markdown 角色、临时配置、单任务/并行/chain，以及会话内后台。
 
-**尚未切换安装。当前 Pi 仍使用 `~/projects/pi-settings/extensions/subagent`；本项目没有修改全局配置、角色链接或扩展链接。不要同时加载两个同名 `subagent` 工具。**
+**日常版基线：`v0.1.0`。采用固定发布目录安装，不跟随开发目录；发布、升级和回滚见 [`INSTALL.md`](INSTALL.md)。不要同时加载两个同名 `subagent` 工具。**
 
 已实现核心功能并提供离线测试；实际 TUI 显示及真实模型/订阅还需人工验收。验证版本：Pi 1.1.0、Node 24、macOS。
 
@@ -172,7 +172,7 @@ subagent_task({action: "cancel", taskId: "…"})
 
 扩展读取 `plan-mode-state` 并检查解析后的真实权限；只允许 `read,grep,find,ls`，不能含外部来源。进入 Plan Mode 时取消已有写入任务，不回滚已经执行的动作。通知仍受当前模式限制。
 
-现有 `pi-settings` Plan Mode 按 `type: "explore"` 授权，与新接口不兼容。仓库提供 **可选** `compat/plan-mode.ts` 替换版本，支持任务管理、实际权限检查和进入只读模式时等待写任务停止。它不自动加载；安装切换时须安排替换旧 Plan Mode，且只能保留一个 `/plan` 扩展。不要只切 subagent 后声称兼容已经完成。
+现有 `pi-settings` Plan Mode 按 `type: "explore"` 授权，与新接口不兼容。仓库提供 **可选** `compat/plan-mode.ts` 替换版本，支持任务管理、实际权限检查和进入只读模式时等待写任务停止。它不由 subagent 自动加载；配套安装路径为 `compat/plan-mode/`，保留旧版的证据优先规划流程。安装时一起替换旧 Plan Mode，且只能保留一个 `/plan` 扩展。
 
 ## 开发与验收
 
@@ -196,6 +196,6 @@ npm test
 - `render.ts`：单任务/并行/chain 的折叠及展开显示。
 - `contracts.ts`：共享数据契约；`tests/`：离线验收。
 - `agents/`、`prompts/`：示例角色和官方 workflow prompts。
-- `PLAN.md`：已确认决策与剩余验收；`UPSTREAM.md`：原始官方说明，仅作历史参考。
+- `INSTALL.md`：固定版本安装、升级和回滚；`PLAN.md`：已确认决策与剩余验收；`UPSTREAM.md`：原始官方说明，仅作历史参考。
 
 底座来自 `@earendil-works/pi-coding-agent` 1.1.0 的官方 subagent 示例。上游：https://github.com/earendil-works/pi ，MIT，保留许可见 `LICENSE`。后续仅维护本项目副本。

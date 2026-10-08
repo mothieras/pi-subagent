@@ -6,6 +6,7 @@ import { test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import extension from "../index.ts";
 import companion from "../compat/plan-mode.ts";
+import directoryCompanion from "../compat/plan-mode/index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { emptyUsage, type RunChild, type SingleResult } from "../contracts.ts";
 async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean } = {}) {
@@ -35,7 +36,7 @@ async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean
 	await emit("session_start");
 	t.after(async () => { await emit("session_shutdown"); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; await fs.rm(root, { recursive: true, force: true }); });
 	const call = (name: string, params: any, signal?: AbortSignal, onUpdate?: any) => tools.get(name).execute("call", params, signal, onUpdate, ctx);
-	return { pi, ctx, root, entries, notifications, configs, commands, call, emit, launched: () => launched };
+	return { pi, ctx, root, entries, notifications, configs, commands, handlers, call, emit, launched: () => launched };
 }
 test("extension exposes arbitrary inline overrides, foreground output and its own ledger (no native charge)", async (t) => {
 	const f = await fixture(t);
@@ -93,4 +94,17 @@ test("companion Plan Mode waits for writer cancellation, allows task management,
 	const status = await f.call("subagent_task", { action: "status", taskId: bg.details.taskId }); assert.equal(status.details.state, "cancelled");
 	assert.equal(f.notifications.length, 0);
 	const rejected = await f.call("subagent", { task: "writer" }); assert.equal(rejected.isError, true);
+});
+test("installed directory companion preserves planning workflow and restores the original tool loadout", async (t) => {
+	assert.equal(directoryCompanion, companion);
+	const f = await fixture(t); f.pi.setActiveTools(["read", "bash", "custom"]);
+	f.entries.push({ type: "custom", customType: "plan-mode-state", data: { enabled: true, toolsBeforePlanMode: ["read", "bash", "custom"] } });
+	companion(f.pi); await f.emit("session_start");
+	assert.ok(f.pi.getActiveTools().includes("subagent_task")); assert.ok(!f.pi.getActiveTools().includes("bash"));
+	const prompt = await f.handlers.get("before_agent_start")!.at(-1)({ systemPrompt: "BASE" });
+	assert.match(prompt.systemPrompt, /Understand the goal/); assert.match(prompt.systemPrompt, /Risks and open questions/);
+	assert.match(prompt.systemPrompt, /resolved permissions, not role names/); assert.doesNotMatch(prompt.systemPrompt, /type "explore"/);
+	await f.commands.get("plan").handler("off", f.ctx);
+	assert.deepEqual(f.pi.getActiveTools(), ["read", "bash", "custom"]);
+	const entries = f.entries.length; await f.commands.get("plan").handler("off", f.ctx); assert.equal(f.entries.length, entries);
 });
