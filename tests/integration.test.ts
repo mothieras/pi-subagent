@@ -15,18 +15,20 @@ async function fixture(t: TestContext, responder?: (request: any, index: number)
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-subagent-integration-"));
 	const agentDir = path.join(dir, "agent"); const cwd = path.join(dir, "repo");
 	await fs.mkdir(agentDir); await fs.mkdir(cwd);
-	const requests: any[] = [];
+	const requests: any[] = []; const responderErrors: unknown[] = [];
 	const server = http.createServer(async (req, res) => {
 		let text = ""; for await (const chunk of req) text += chunk;
-		const request = JSON.parse(text); requests.push(request);
+		const request = JSON.parse(text); requests.push(request); const index = requests.length;
 		res.writeHead(200, { "Content-Type": "text/event-stream" });
-		const delta = await responder?.(request, requests.length) ?? { content: "offline answer" };
+		let delta: object;
+		try { delta = await responder?.(request, index) ?? { content: "offline answer" }; }
+		catch (error) { responderErrors.push(error); delta = { content: "offline responder failed" }; }
 		const tool = "tool_calls" in delta;
 		for (const record of [
 			{ choices: [{ index: 0, delta: { role: "assistant", ...delta }, finish_reason: null }] },
 			{ choices: [{ index: 0, delta: {}, finish_reason: tool ? "tool_calls" : "stop" }] },
 			{ choices: [], usage: { prompt_tokens: 23, completion_tokens: 7, total_tokens: 30 } },
-		]) res.write(`data: ${JSON.stringify({ id: `completion-${requests.length}`, object: "chat.completion.chunk", created: 1, model: "test", ...record })}\n\n`);
+		]) res.write(`data: ${JSON.stringify({ id: `completion-${index}`, object: "chat.completion.chunk", created: 1, model: "test", ...record })}\n\n`);
 		res.end("data: [DONE]\n\n");
 	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -35,7 +37,7 @@ async function fixture(t: TestContext, responder?: (request: any, index: number)
 		baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "offline-test-only", models: [{ id: "test", reasoning: false,
 			input: ["text"], contextWindow: 8192, maxTokens: 256, cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }],
 	} } }));
-	await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "fake", defaultModel: "test", retry: { enabled: false }, cacheWarming: "off" }));
+	await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "fake", defaultModel: "test", compaction: { enabled: false }, retry: { enabled: false }, cacheWarming: "off" }));
 	await fs.writeFile(path.join(agentDir, "SYSTEM.md"), "AMBIENT_SYSTEM_MUST_NOT_LEAK");
 	await fs.writeFile(path.join(agentDir, "APPEND_SYSTEM.md"), "AMBIENT_APPEND_MUST_NOT_LEAK");
 	await fs.writeFile(path.join(agentDir, "AGENTS.md"), "AMBIENT_CONTEXT_MUST_NOT_LEAK");
@@ -47,6 +49,7 @@ async function fixture(t: TestContext, responder?: (request: any, index: number)
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve()));
 		await fs.rm(dir, { recursive: true, force: true });
+		assert.deepEqual(responderErrors, [], "local fake-provider responder failed");
 	});
 	const task: ResolvedTask = { agent: "inline", agentSource: "inline", shadowedFiles: [], task: "test task", cwd, model: "fake/test", thinking: "off",
 		rolePrompt: "ROLE_ONLY_THIS", tools: { allow: ["read"], extensions: [], mcp: [] }, readOnly: true, provenance: {} };
@@ -115,16 +118,12 @@ test("explicit MCP server connects and executes; ambient/unselected servers are 
 	assert.equal(await fs.stat(marker).then(() => true, () => false), false);
 });
 
-for (const busy of [false, true]) test(`real parent RPC automatically wakes on background completion while ${busy ? "busy" : "idle"}`, { timeout: 20000 }, async (t) => {
-	let parentCalls = 0;
-	const f = await fixture(t, async (request) => {
-		if (JSON.stringify(request.messages).includes("Task: CHILD_JOB")) { await delay(busy ? 100 : 500); return { content: "child finished" }; }
-		parentCalls++;
-		if (parentCalls === 1) return { tool_calls: [{ index: 0, id: "delegate", type: "function", function: { name: "subagent", arguments: JSON.stringify({ task: "CHILD_JOB", background: true, config: { tools: { allow: ["read"] } } }) } }] };
-		if (parentCalls === 2 && busy) await delay(1200);
-		return { content: parentCalls >= 3 ? "parent automatically woke" : "parent continued" };
-	});
-	const root = spawn(process.execPath, [path.resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--offline", "-e", path.resolve("index.ts"), "-e", path.resolve("compat/plan-mode"), "--plan", "--model", "fake/test", "--thinking", "off", "--tools", "subagent,subagent_task"], { cwd: f.cwd, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } });
+function completionRecords(records: any[]): any[] {
+	return records.filter((record) => record.type === "message_end" && record.message?.customType === "subagent-complete" ||
+		record.type === "entry_appended" && record.entry?.type === "custom_message" && record.entry.customType === "subagent-complete");
+}
+async function parentRpc(t: TestContext, cwd: string) {
+	const root = spawn(process.execPath, [path.resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--offline", "-e", path.resolve("index.ts"), "-e", path.resolve("compat/plan-mode"), "--plan", "--model", "fake/test", "--thinking", "off", "--tools", "subagent,subagent_task"], { cwd, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } });
 	let closed = false; const exit = new Promise<void>((resolve) => root.on("close", () => { closed = true; resolve(); }));
 	let stderr = ""; let buffer = ""; const records: any[] = [];
 	root.stderr.on("data", (chunk) => { stderr += String(chunk); });
@@ -137,17 +136,89 @@ for (const busy of [false, true]) test(`real parent RPC automatically wakes on b
 		if (!closed) { if (process.platform === "win32") root.kill("SIGKILL"); else { try { process.kill(-root.pid!, "SIGKILL"); } catch {} } }
 		await exit;
 	});
-	root.stdin.write(JSON.stringify({ id: "launch", type: "prompt", message: "launch-bg" }) + "\n");
+	const prompt = (message: string) => root.stdin.write(JSON.stringify({ id: "launch", type: "prompt", message }) + "\n");
+	const wait = async (predicate: () => boolean) => {
+		for (let i = 0; i < 700; i++) {
+			if (predicate()) return;
+			if (closed) assert.fail(`Parent RPC exited: ${stderr}`);
+			await delay(20);
+		}
+		assert.fail(`Parent RPC did not reach expected state: ${stderr}`);
+	};
+	return { records, prompt, wait, stderr: () => stderr };
+}
+function isChildRequest(request: any, task: string): boolean {
+	return request.messages.some((message: any) => message.role === "user" && JSON.stringify(message.content).includes(`Task: ${task}`));
+}
+for (const busy of [false, true]) test(`real parent RPC automatically wakes on background completion while ${busy ? "busy" : "idle"}`, { timeout: 20000 }, async (t) => {
+	let parentCalls = 0; let taskId = "";
+	const f = await fixture(t, async (request) => {
+		if (isChildRequest(request, "CHILD_JOB")) { if (!busy) await delay(500); return { content: "child finished" }; }
+		parentCalls++;
+		assert.ok(parentCalls < 150, "parent never reached completion");
+		if (parentCalls === 1) return { tool_calls: [{ index: 0, id: "delegate", type: "function", function: { name: "subagent", arguments: JSON.stringify({ task: "CHILD_JOB", background: true, config: { tools: { allow: ["read"] } } }) } }] };
+		if (JSON.stringify(request.messages.at(-1)).includes("Background subagent tasks finished:")) return { content: "parent automatically woke" };
+		if (busy) {
+			let completed = false;
+			if (!taskId) taskId = JSON.stringify(request.messages).match(/Started background task ([a-f0-9-]+)/)![1];
+			else completed = JSON.parse(request.messages.at(-1).content).state === "completed";
+			if (!completed) {
+				await delay(5);
+				return { tool_calls: [{ index: 0, id: `status-${parentCalls}`, type: "function", function: { name: "subagent_task", arguments: JSON.stringify({ action: "status", taskId }) } }] };
+			}
+		}
+		return { content: "parent continued" };
+	});
+	const parent = await parentRpc(t, f.cwd); const { records } = parent;
+	parent.prompt("launch-bg");
 	let settledBeforeChild = false;
-	for (let i = 0; i < 500; i++) {
-		if (records.some((record) => record.type === "agent_settled") && !records.some((record) => record.type === "message_end" && record.message?.customType === "subagent-complete")) settledBeforeChild = true;
-		if (records.some((record) => record.type === "message_end" && record.message?.role === "assistant" && record.message.content?.some((part: any) => part.text === "parent automatically woke")) && records.filter((record) => record.type === "agent_settled").length >= (busy ? 1 : 2)) break;
-		if (closed) assert.fail(`Parent RPC exited: ${stderr}`);
-		await delay(20);
-	}
-	assert.equal(parentCalls, 3, stderr);
-	assert.equal(records.filter((record) => record.type === "message_end" && record.message?.customType === "subagent-complete").length, 1);
+	await parent.wait(() => {
+		if (records.some((record) => record.type === "agent_settled") && !completionRecords(records).length) settledBeforeChild = true;
+		return records.some((record) => record.type === "message_end" && record.message?.role === "assistant" && record.message.content?.some((part: any) => part.text === "parent automatically woke")) && records.filter((record) => record.type === "agent_settled").length >= (busy ? 1 : 2);
+	});
+	if (!busy) assert.equal(parentCalls, 3, parent.stderr());
+	assert.equal(completionRecords(records).length, 1);
 	assert.equal(records.filter((record) => record.type === "agent_settled").length, busy ? 1 : 2);
 	if (!busy) assert.equal(settledBeforeChild, true, "parent never became idle before background completion");
-	assert.ok(!records.some((record) => record.type === "extension_error"), stderr);
+	assert.ok(!records.some((record) => record.type === "extension_error"), parent.stderr());
+});
+
+for (const view of ["complete", "partial", "log"] as const) test(`real busy parent ${view === "complete" ? "consumes reminders on complete delivery" : `keeps reminders after ${view} reads`}`, { timeout: 20000 }, async (t) => {
+	let calls = 0; let taskId = ""; let readIssued = false; let integrated = false; let reminders = 0;
+	let childResponded!: () => void;
+	const childReady = new Promise<void>((resolve) => { childResponded = resolve; });
+	const tool = (action: string, extra: object = {}) => ({ tool_calls: [{ index: 0, id: `parent-${calls}`, type: "function",
+		function: { name: "subagent_task", arguments: JSON.stringify({ action, taskId, ...extra }) } }] });
+	const f = await fixture(t, async (request) => {
+		if (isChildRequest(request, "CHILD_DELIVERY_REPORT")) { childResponded(); return { content: "private child final report" }; }
+		calls++; assert.ok(calls < 150, "parent status polling failed to reach child completion");
+		if (calls === 1) return { tool_calls: [{ index: 0, id: "delegate", type: "function", function: { name: "subagent", arguments: JSON.stringify({ task: "CHILD_DELIVERY_REPORT", background: true, config: { tools: { allow: ["read"] } } }) } }] };
+		if (!taskId) {
+			taskId = JSON.stringify(request.messages).match(/Started background task ([a-f0-9-]+)/)![1];
+			await childReady;
+			return tool("status");
+		}
+		if (!readIssued) {
+			const status = JSON.parse(request.messages.at(-1).content);
+			if (status.state !== "completed") { await delay(5); return tool("status"); }
+			readIssued = true;
+			return tool("result", view === "partial" ? { maxBytes: 3 } : view === "log" ? { view: "log" } : {});
+		}
+		if (!integrated) { integrated = true; return { content: "parent integrated its available report" }; }
+		reminders++;
+		assert.ok(JSON.stringify(request.messages.at(-1)).includes(taskId), "continuation omitted its task ID");
+		assert.ok(!JSON.stringify(request.messages.at(-1)).includes("private child final report"), "completion injected child report");
+		return { content: "parent received the remaining completion reminder" };
+	});
+	const parent = await parentRpc(t, f.cwd); const { records } = parent;
+	parent.prompt("launch and collect a background report");
+	await parent.wait(() => integrated && records.some((record) => record.type === "agent_settled"));
+	assert.equal(reminders, view === "complete" ? 0 : 1, parent.stderr());
+	assert.equal(completionRecords(records).length, view === "complete" ? 0 : 1);
+	assert.equal(records.filter((record) => record.type === "message_end" && record.message?.role === "toolResult" && record.message.toolName === "subagent_task" && record.message.details?.view === (view === "log" ? "log" : "output")).length, 1);
+	if (view === "complete") {
+		const report = records.find((record) => record.type === "message_end" && record.message?.details?.view === "output");
+		assert.ok(report.message.content[0].text.includes("private child final report"));
+	}
+	assert.ok(!records.some((record) => record.type === "extension_error"), parent.stderr());
 });

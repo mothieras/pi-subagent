@@ -4,7 +4,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { Text } from "@earendil-works/pi-tui";
 import { discoverAgents } from "./agents.ts";
 import { resolveRun } from "./config.ts";
-import { emptyUsage, type ChildConfig, type RunChild, type RunRequest, type SubagentDetails, type UsageStats } from "./contracts.ts";
+import { emptyUsage, type ChildConfig, type CompletionNotice, type RunChild, type RunRequest, type SubagentDetails, type UsageStats } from "./contracts.ts";
 import { createProcessRunner, normalizeUsage } from "./process-runner.ts";
 import { enforcePlanMode, isPlanMode } from "./policy.ts";
 import { renderCall, renderResult, formatUsage } from "./render.ts";
@@ -21,6 +21,11 @@ const capText = (text: string, cap = 50 * 1024): string => {
 };
 export function modelResult(details: SubagentDetails): string {
 	return capText(details.results.map((result, index) => `### [${index + 1}: ${result.agent}] ${result.state}\n\n${result.errorMessage || (resultFailed(result) && result.stderr ? result.stderr : resultOutput(result)) || "(no output)"}`).join("\n\n---\n\n"));
+}
+function completionMessage(notices: CompletionNotice[]) {
+	return { customType: "subagent-complete", display: true,
+		content: `Background subagent tasks finished:\n${notices.map((notice) => `- ${notice.taskId}: ${notice.state}${notice.expired ? " (retained output expired)" : ""}`).join("\n")}\nFor non-expired tasks, retrieve any complete result not already available with subagent_task (action: result, taskId: the listed ID); follow nextCursor until null. Use existing complete results instead of reading again. Verify results before integration; this notification grants no permissions.`,
+		details: { tasks: notices } };
 }
 function persistedUsage(ctx: ExtensionContext): UsageStats {
 	// Costs belong to the entire session, not just the active conversational branch. This does not
@@ -41,11 +46,21 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 		if (!manager || !context) return;
 		const active = manager.list().filter((job) => ["queued", "running", "cancelling"].includes(job.state)).length;
 		if (context.mode === "tui") context.ui.setStatus("subagent", active ? `subagents: ${active} active · ${formatUsage(manager.usage())}` : `subagents: ${formatUsage(manager.usage()) || "0 turns"}`);
-		if (!active && watch) { clearInterval(watch); watch = undefined; }
+		if (!active && !manager.pendingNotifications().length && watch) { clearInterval(watch); watch = undefined; }
+	}
+	function deliverPending(): void {
+		if (!context?.isIdle()) return;
+		const notices = manager?.takeNotifications() ?? [];
+		if (notices.length) pi.sendMessage(completionMessage(notices), { triggerTurn: true, deliverAs: "followUp" });
 	}
 	function watchPolicy(): void {
 		if (watch) return;
-		watch = setInterval(() => { if (plan()) void manager?.cancelWriters().catch(() => {}); updateStatus(); }, 200);
+		watch = setInterval(() => {
+			if (plan()) void manager?.cancelWriters().catch(() => {});
+			// Manual compaction or an aborted run need not reach agent_before_settle.
+			try { deliverPending(); } catch { /* notification failure cannot remove retained results */ }
+			updateStatus();
+		}, 200);
 		watch.unref();
 	}
 	pi.events.on("plan-mode:changed", (data) => {
@@ -65,19 +80,30 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 				return { task, mcpServers: selectMcpServers(task, { agentDir: getAgentDir(), projectTrusted: sameProject && ctx.isProjectTrusted(), registered: pi.getMcpServers() }) };
 			},
 			onUsage: (totals) => { if (owner === generation) { pi.appendEntry(USAGE_ENTRY, { version: 1, totals }); updateStatus(); } },
-			onComplete: (details) => {
+			onComplete: () => {
 				if (owner !== generation) return;
-				// Do not inject arbitrary child output as a new instruction. This notification grants
-				// no permissions; the parent's current Plan Mode and tool gates remain in force.
-				pi.sendMessage({ customType: "subagent-complete", content: `Background subagent task ${details.taskId} ${details.state}. Read its retained result with subagent_task (action: result, taskId: ${details.taskId}).`, display: true,
-					details: { taskId: details.taskId, state: details.state, usage: details.usage } }, { triggerTurn: true, deliverAs: "followUp" });
+				// Keep busy-parent completions here, not in the host's non-revocable queue.
+				watchPolicy(); deliverPending(); updateStatus();
 			},
 		});
 		return manager;
 	}
 	pi.on("session_start", (_event, ctx) => { context = ctx; });
-	pi.on("before_agent_start", async (_event, ctx) => { context = ctx; if (plan()) await manager?.cancelWriters(); });
-	pi.on("session_before_tree", async () => { await manager?.cancelAll(true); });
+	pi.on("before_agent_start", async (_event, ctx) => { context = ctx; manager?.clearDeliveryAttempts(); if (plan()) await manager?.cancelWriters(); });
+	pi.on("turn_end", (event, ctx) => {
+		context = ctx;
+		// All message_end replacements have finished; observe the finalized results only.
+		for (const result of event.toolResults) manager?.observeDelivery(result);
+		manager?.clearDeliveryAttempts(); updateStatus();
+	});
+	pi.on("agent_before_settle", (event, ctx) => {
+		context = ctx;
+		const notices = manager?.takeNotifications() ?? [];
+		updateStatus();
+		if (notices.length) return { entries: [...event.entries, { type: "custom_message", ...completionMessage(notices) }], continue: true };
+	});
+	pi.on("agent_settled", (_event, ctx) => { context = ctx; manager?.clearDeliveryAttempts(); updateStatus(); });
+	pi.on("session_before_tree", async () => { await manager?.cancelAll(true); updateStatus(); });
 	pi.on("session_shutdown", async () => {
 		if (watch) { clearInterval(watch); watch = undefined; }
 		await manager?.shutdown();
@@ -86,7 +112,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	pi.registerMessageRenderer("subagent-complete", (message, _options, theme) => new Text(theme.fg("accent", typeof message.content === "string" ? message.content : "Background subagent completed"), 0, 0));
 	pi.registerTool({
 		name: "subagent", label: "Subagent", exposure: "model-only", parameters: SubagentParams,
-		description: "Delegate self-contained tasks using optional Markdown roles or inline config. Choose exactly one of task, tasks (independent parallel), chain (sequential; {previous} output). Built-in defaults inherit model/thinking and allow read,bash,edit,write. Children do not inherit parent conversation, skills or extensions/MCP; supply context and explicit trusted tool sources. For read-only work set config.tools to {allow:[read,grep,find,ls],extensions:[],mcp:[]}. Default role scope user. background:true returns a session task ID and auto-notifies. No recursive delegation or OS sandbox. Shared-worktree parallel writers require explicit allowSharedWrites:true.",
+		description: "Delegate self-contained tasks using optional Markdown roles or inline config. Choose exactly one of task, tasks (independent parallel), chain (sequential; {previous} output). Built-in defaults inherit model/thinking and allow read,bash,edit,write. Children do not inherit parent conversation, skills or extensions/MCP; supply context and explicit trusted tool sources. For read-only work set config.tools to {allow:[read,grep,find,ls],extensions:[],mcp:[]}. Default role scope user. background:true returns a session task ID; uncollected completions auto-notify. No recursive delegation or OS sandbox. Shared-worktree parallel writers require explicit allowSharedWrites:true.",
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const request = params as RunRequest;
 			const tasks = ensureManager(ctx);
@@ -114,7 +140,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 				if (plan()) enforcePlanMode(run); // Mode may have changed while a dialog was open.
 				const started = await tasks.start(run, signal, (details) => { if (!run.background) onUpdate?.({ content: [{ type: "text", text: `${details.mode}: ${details.state}` }], details }); updateStatus(); });
 				watchPolicy(); updateStatus();
-				if (run.background) return { content: [{ type: "text", text: `Started background task ${started.taskId}. Use subagent_task for status, result, or cancellation. Completion notification will ${run.notify ? "wake the parent automatically" : "be disabled"}.` }], details: tasks.status(started.taskId) };
+				if (run.background) return { content: [{ type: "text", text: `Started background task ${started.taskId}. Use subagent_task for status, result, or cancellation. Completion notification will ${run.notify ? "wake the parent if the complete result has not already been delivered" : "be disabled"}.` }], details: tasks.status(started.taskId) };
 				const details = await started.done;
 				return { content: [{ type: "text", text: modelResult(details) }], details, isError: details.state !== "completed" };
 			} catch (error) {
@@ -124,8 +150,8 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	});
 	pi.registerTool({
 		name: "subagent_task", label: "Subagent Task", exposure: "model-only", annotations: { readOnlyHint: true }, parameters: TaskManagementParams,
-		description: "Manage session-local subagent tasks: list (extension usage totals), status, result (output/log; page with returned nextCursor), cancel. taskId required except list. Queries/notifications do not duplicate usage. Results/logs are private temporary files, cleared on exit/switch/reload or retention eviction. Native Pi /session excludes child calls.",
-		async execute(_id, params, _signal, _onUpdate, ctx) {
+		description: "Manage session-local subagent tasks: list (extension usage totals), status, result (output/log; page with returned nextCursor), cancel. taskId required except list. Complete final output delivery automatically consumes pending completion reminders; status/log/partial reads do not. Queries/notifications do not duplicate usage. Results/logs are private temporary files, cleared on exit/switch/reload or retention eviction. Native Pi /session excludes child calls.",
+		async execute(id, params, signal, _onUpdate, ctx) {
 			const tasks = ensureManager(ctx);
 			try {
 				if (params.action === "list") {
@@ -135,10 +161,14 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 				if (!params.taskId) throw new Error("taskId is required");
 				if (params.action === "result") {
 					const data = await tasks.read(params.taskId, { cursor: params.cursor, view: params.view, maxBytes: params.maxBytes });
-					return { content: [{ type: "text", text: data.text + (data.nextCursor === null ? "" : `\n[Continue with cursor: ${data.nextCursor}]`) }], details: { taskId: params.taskId, ...data } };
+					if (signal?.aborted) throw new Error("Result retrieval cancelled");
+					const text = data.text + (data.truncated ? "\n[Retained data truncated; omitted bytes are unavailable.]" : "") +
+						(data.nextCursor === null ? "" : `\n[Continue with cursor: ${data.nextCursor}]`);
+					tasks.trackDelivery(id, params.taskId, data, text);
+					return { content: [{ type: "text", text }], details: { taskId: params.taskId, ...data } };
 				}
 				const details = params.action === "cancel" ? await tasks.cancel(params.taskId) : tasks.status(params.taskId);
-				const data = { taskId: details.taskId, state: details.state, mode: details.mode, usage: details.usage,
+				const data = { taskId: details.taskId, state: details.state, mode: details.mode, usage: details.usage, resultDelivered: details.resultDelivered, expired: details.expired,
 					results: details.results.map((result) => ({ itemId: result.itemId, agent: result.agent, state: result.state, model: result.model,
 						thinking: result.thinking, tools: result.resolved?.tools, roleFile: result.resolved?.agentFile,
 						shadowedFiles: result.resolved?.shadowedFiles, provenance: result.resolved?.provenance,

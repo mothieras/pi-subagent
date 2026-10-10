@@ -9,13 +9,13 @@ import companion from "../compat/plan-mode.ts";
 import directoryCompanion from "../compat/plan-mode/index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { emptyUsage, type RunChild, type SingleResult } from "../contracts.ts";
-async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean } = {}) {
+async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean; idle?: boolean } = {}) {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-extension-test-"));
 	const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = root;
 	const tools = new Map<string, any>(); const handlers = new Map<string, any[]>(); const events = new Map<string, any[]>(); const commands = new Map<string, any>();
 	const entries: any[] = []; const notifications: any[] = []; const configs: any[] = []; let launched = 0; let active: string[] = [];
 	const ctx: any = { cwd: root, model: { provider: "fake", id: "test" }, thinkingLevel: "high", mode: "json", hasUI: false,
-		modelRegistry: { getAll: () => [{ provider: "fake", id: "test" }] }, sessionManager: { getEntries: () => entries, getBranch: () => entries }, isIdle: () => false, isProjectTrusted: () => false,
+		modelRegistry: { getAll: () => [{ provider: "fake", id: "test" }] }, sessionManager: { getEntries: () => entries, getBranch: () => entries }, isIdle: () => options.idle ?? false, isProjectTrusted: () => false,
 		ui: { setStatus: () => {}, notify: () => {} } };
 	if (options.plan) entries.push({ type: "custom", customType: "plan-mode-state", data: { enabled: true } });
 	const pi: any = { on: (name: string, handler: unknown) => { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); return () => {}; },
@@ -32,10 +32,32 @@ async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean
 		await fs.writeFile(files.outputPath, task.task); return signal.aborted ? { ...result, state: "cancelled", exitCode: 1 } : result;
 	};
 	extension(pi as ExtensionAPI, { runner });
-	const emit = async (name: string, data: unknown = {}) => { for (const handler of handlers.get(name) ?? []) await handler(data, ctx); };
+	const emit = async (name: string, data: any = {}) => {
+		const event: any = { type: name, entries: [], continue: false, ...data };
+		for (const handler of handlers.get(name) ?? []) {
+			const result = await handler(event, ctx);
+			if (result?.entries !== undefined) event.entries = result.entries;
+			if (result?.continue !== undefined) event.continue = result.continue;
+			if (result?.message !== undefined) event.message = result.message;
+		}
+		if (name === "agent_before_settle") for (const entry of event.entries) {
+			entries.push(entry);
+			if (entry.type === "custom_message" && entry.customType === "subagent-complete") notifications.push({ message: entry, options: { boundary: true } });
+		}
+		return event;
+	};
 	await emit("session_start");
 	t.after(async () => { await emit("session_shutdown"); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; await fs.rm(root, { recursive: true, force: true }); });
-	const call = (name: string, params: any, signal?: AbortSignal, onUpdate?: any) => tools.get(name).execute("call", params, signal, onUpdate, ctx);
+	let nextCall = 0;
+	const call = async (name: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
+		const id = `call-${++nextCall}`;
+		const answer = await tools.get(name).execute(id, params, signal, onUpdate, ctx);
+		const final = await emit("message_end", { message: { role: "toolResult", toolCallId: id, toolName: name,
+			content: answer.content, details: answer.details, isError: answer.isError ?? false, timestamp: Date.now() } });
+		entries.push({ type: "message", message: final.message });
+		await emit("turn_end", { toolResults: [final.message] });
+		return answer;
+	};
 	return { pi, ctx, root, entries, notifications, configs, commands, handlers, call, emit, launched: () => launched };
 }
 test("extension exposes arbitrary inline overrides, foreground output and its own ledger (no native charge)", async (t) => {
@@ -47,18 +69,20 @@ test("extension exposes arbitrary inline overrides, foreground output and its ow
 	const listed = await f.call("subagent_task", { action: "list" }); assert.equal(listed.details.usage.input, 10);
 	assert.ok(f.entries.some((entry) => entry.customType === "subagent-usage-v1"));
 });
-test("single, parallel and chain background paths immediately return IDs, detach caller and wake with followUp exactly once", async (t) => {
+test("background paths return IDs, detach caller and notify once at parent settlement", async (t) => {
 	const f = await fixture(t, { hold: true }); const controller = new AbortController(); let toolUpdates = 0;
 	const launched = await f.call("subagent", { task: "background", background: true, config: { tools: { allow: ["read"] } } }, controller.signal, () => { toolUpdates++; });
 	const id = launched.details.taskId; assert.ok(id); controller.abort();
 	while (!f.launched()) await delay(1);
 	const status = await f.call("subagent_task", { action: "status", taskId: id }); assert.equal(status.details.state, "running");
 	await f.call("subagent_task", { action: "cancel", taskId: id });
-	assert.equal(toolUpdates, 0); assert.equal(f.notifications.length, 1);
-	assert.deepEqual(f.notifications[0].options, { triggerTurn: true, deliverAs: "followUp" });
+	assert.equal(toolUpdates, 0); assert.equal(f.notifications.length, 0);
+	assert.equal((await f.emit("agent_before_settle")).continue, true);
+	assert.equal(f.notifications.length, 1);
+	await f.emit("agent_before_settle"); assert.equal(f.notifications.length, 1);
 	assert.ok(!f.notifications[0].message.content.includes("Task: background"));
 });
-test("background parallel and chain complete with notifications and result pagination", async (t) => {
+test("complete parallel and chain results consume pending reminders without changing usage", async (t) => {
 	const f = await fixture(t);
 	for (const items of [{ tasks: [{ task: "one" }, { task: "two" }] }, { chain: [{ task: "one" }, { task: "two {previous}" }] }]) {
 		const started = await f.call("subagent", { ...items, background: true, config: { tools: { allow: ["read"] } } });
@@ -66,7 +90,79 @@ test("background parallel and chain complete with notifications and result pagin
 		for (let i = 0; i < 100; i++) { if ((await f.call("subagent_task", { action: "status", taskId: id })).details.state === "completed") break; await delay(2); }
 		const output = await f.call("subagent_task", { action: "result", taskId: id }); assert.equal(output.isError, undefined); assert.ok(output.content[0].text.includes("one"));
 	}
-	assert.equal(f.notifications.length, 2); assert.equal((await f.call("subagent_task", { action: "list" })).details.usage.input, 40);
+	await f.emit("agent_before_settle");
+	assert.equal(f.notifications.length, 0);
+	const listed = await f.call("subagent_task", { action: "list" });
+	assert.ok(listed.details.tasks.every((job: any) => job.resultDelivered));
+	assert.equal(listed.details.usage.input, 40);
+});
+test("settlement batches only uncollected results and preserves other extensions' drafts", async (t) => {
+	const f = await fixture(t);
+	const ids: string[] = [];
+	for (const task of ["PRIVATE FIRST REPORT", "PRIVATE SECOND REPORT", "PRIVATE THIRD REPORT"]) {
+		const started = await f.call("subagent", { task, background: true, config: { tools: { allow: ["read"] } } });
+		ids.push(started.details.taskId);
+		for (let i = 0; i < 100; i++) { if ((await f.call("subagent_task", { action: "status", taskId: ids.at(-1) })).details.state === "completed") break; await delay(2); }
+	}
+	await f.call("subagent_task", { action: "result", taskId: ids[0] });
+	f.handlers.get("agent_before_settle")!.unshift((event: any) => ({ entries: [...event.entries, { type: "custom", customType: "other-extension", data: { kept: true } }] }));
+	const boundary = await f.emit("agent_before_settle");
+	assert.equal(boundary.continue, true); assert.equal(f.notifications.length, 1);
+	assert.ok(f.entries.some((entry) => entry.customType === "other-extension"));
+	assert.deepEqual(f.notifications[0].message.details.tasks.map((job: any) => job.taskId), ids.slice(1));
+	assert.doesNotMatch(f.notifications[0].message.content, /PRIVATE/);
+	await f.emit("agent_before_settle"); assert.equal(f.notifications.length, 1);
+	assert.equal((await f.call("subagent_task", { action: "list" })).details.usage.input, 30);
+});
+test("partial/log/error reads keep reminders; complete finalized output consumes them", async (t) => {
+	const f = await fixture(t);
+	const started = await f.call("subagent", { task: "分页🌍 report", background: true, config: { tools: { allow: ["read"] } } });
+	const taskId = started.details.taskId;
+	for (let i = 0; i < 100; i++) { if ((await f.call("subagent_task", { action: "status", taskId })).details.state === "completed") break; await delay(2); }
+	await f.call("subagent_task", { action: "result", taskId, maxBytes: 3 });
+	await f.call("subagent_task", { action: "result", taskId, view: "log" });
+	assert.equal((await f.call("subagent_task", { action: "result", taskId, cursor: -1 })).isError, true);
+	const controller = new AbortController(); controller.abort();
+	assert.equal((await f.call("subagent_task", { action: "result", taskId }, controller.signal)).isError, true);
+	assert.equal((await f.call("subagent_task", { action: "status", taskId })).details.resultDelivered, false);
+	await f.call("subagent_task", { action: "result", taskId });
+	assert.equal((await f.call("subagent_task", { action: "status", taskId })).details.resultDelivered, true);
+	assert.equal((await f.emit("agent_before_settle")).continue, false);
+	assert.equal(f.notifications.length, 0);
+});
+test("later message_end redaction cannot falsely consume a completion reminder", async (t) => {
+	const f = await fixture(t);
+	const started = await f.call("subagent", { task: "private report", background: true, config: { tools: { allow: ["read"] } } });
+	const taskId = started.details.taskId;
+	for (let i = 0; i < 100; i++) { if ((await f.call("subagent_task", { action: "status", taskId })).details.state === "completed") break; await delay(2); }
+	f.pi.on("message_end", (event: any) => event.message.toolName === "subagent_task" && event.message.details?.view === "output"
+		? { message: { ...event.message, content: [{ type: "text", text: "redacted" }] } } : undefined);
+	await f.call("subagent_task", { action: "result", taskId });
+	assert.equal((await f.call("subagent_task", { action: "status", taskId })).details.resultDelivered, false);
+	assert.equal((await f.emit("agent_before_settle")).continue, true);
+	assert.equal(f.notifications.length, 1);
+});
+for (const idle of [true, false]) test(`completion wakes ${idle ? "directly while idle" : "after a busy-only operation becomes idle"}`, async (t) => {
+	const f = await fixture(t, { idle });
+	await f.call("subagent", { task: "ready", background: true, config: { tools: { allow: ["read"] } } });
+	if (!idle) { await delay(20); assert.equal(f.notifications.length, 0); f.ctx.isIdle = () => true; }
+	for (let i = 0; i < 100 && !f.notifications.length; i++) await delay(5);
+	assert.equal(f.notifications.length, 1);
+	assert.deepEqual(f.notifications[0].options, { triggerTurn: true, deliverAs: "followUp" });
+});
+for (const transition of ["tree", "reload"]) test(`${transition} drops completed pending reminders without losing the usage ledger`, async (t) => {
+	const f = await fixture(t);
+	const started = await f.call("subagent", { task: "old branch", background: true, config: { tools: { allow: ["read"] } } });
+	const taskId = started.details.taskId;
+	for (let i = 0; i < 100; i++) { if ((await f.call("subagent_task", { action: "status", taskId })).details.state === "completed") break; await delay(2); }
+	if (transition === "tree") await f.emit("session_before_tree");
+	else { await f.emit("session_shutdown", { reason: "reload" }); await f.emit("session_start", { reason: "reload" }); }
+	await f.emit("agent_before_settle");
+	assert.equal(f.notifications.length, 0);
+	const listed = await f.call("subagent_task", { action: "list" });
+	assert.equal(listed.details.usage.input, 10);
+	if (transition === "tree") assert.equal(listed.details.tasks[0].state, "completed");
+	else assert.deepEqual(listed.details.tasks, []);
 });
 test("Plan Mode rejects actual writable/default/external permissions regardless of role labels", async (t) => {
 	const f = await fixture(t, { plan: true });

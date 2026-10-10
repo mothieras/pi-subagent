@@ -1,10 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { emptyUsage, type ChildConfig, type ResolvedRun, type ResolvedTask, type RunChild, type RunnerFiles, type SingleResult, type SubagentDetails, type TaskState, type UsageStats } from "./contracts.ts";
+import { emptyUsage, type ChildConfig, type CompletionNotice, type ResolvedRun, type ResolvedTask, type ResultPage, type RunChild, type RunnerFiles, type SingleResult, type SubagentDetails, type TaskState, type UsageStats } from "./contracts.ts";
 import { aggregateUsage, getFinalOutput } from "./process-runner.ts";
 
 const executeFile = promisify(execFile);
@@ -50,7 +51,8 @@ class Slots {
 interface Job {
 	id: string; run: ResolvedRun; state: TaskState; controller: AbortController; results: SingleResult[];
 	files: RunnerFiles[]; workspaces: string[]; done: Promise<SubagentDetails>;
-	startedAt: number; finishedAt?: number; expired: boolean; suppressNotification: boolean;
+	startedAt: number; finishedAt?: number; expired: boolean; suppressNotification: boolean; notificationSent: boolean;
+	resultDelivered: boolean; deliveredRanges: Array<[number, number]>; deliveryTotal?: number;
 	update?: (details: SubagentDetails) => void;
 }
 export interface TaskManagerOptions {
@@ -79,6 +81,8 @@ export class SessionTasks {
 	private admissions: Promise<unknown> = Promise.resolve();
 	private cleanup?: Promise<void>;
 	private pruning: Promise<void> = Promise.resolve();
+	// Receipts bind a page to the actual model-visible text, not merely a read or tool hint.
+	private deliveryAttempts = new Map<string, { taskId: string; cursor: number; end: number; total: number; hash: string }>();
 	constructor(private options: TaskManagerOptions) {
 		this.baseline = structuredClone(options.baselineUsage ?? emptyUsage());
 		this.slots = new Slots(Math.max(1, options.concurrency ?? 4));
@@ -86,17 +90,55 @@ export class SessionTasks {
 	usage(): UsageStats { return aggregateUsage([this.baseline, this.retired, ...[...this.jobs.values()].flatMap((job) => job.results.map((result) => result.usage))]); }
 	private snapshot(job: Job): SubagentDetails {
 		return structuredClone({ mode: job.run.mode, agentScope: job.run.agentScope, projectAgentsDir: job.run.projectAgentsDir,
-			results: job.results, taskId: job.id, state: job.state, usage: aggregateUsage(job.results.map((result) => result.usage)) });
+			results: job.results, taskId: job.id, state: job.state, resultDelivered: job.resultDelivered, expired: job.expired,
+			usage: aggregateUsage(job.results.map((result) => result.usage)) });
 	}
 	private publish(job: Job): void { try { job.update?.(this.snapshot(job)); } catch { /* UI errors do not own the job */ } }
 	private get(id: string): Job { const job = this.jobs.get(id); if (!job) throw new Error(`Unknown or expired session task: ${id}`); return job; }
 	status(id: string): SubagentDetails { return this.snapshot(this.get(id)); }
-	list(): Array<{ taskId: string; state: TaskState; mode: ResolvedRun["mode"]; startedAt: number; finishedAt?: number; expired: boolean; progress: { total: number; done: number }; usage: UsageStats }> {
+	list(): Array<{ taskId: string; state: TaskState; mode: ResolvedRun["mode"]; startedAt: number; finishedAt?: number; expired: boolean; resultDelivered: boolean; progress: { total: number; done: number }; usage: UsageStats }> {
 		return [...this.jobs.values()].map((job) => ({ taskId: job.id, state: job.state, mode: job.run.mode,
-			startedAt: job.startedAt, finishedAt: job.finishedAt, expired: job.expired,
+			startedAt: job.startedAt, finishedAt: job.finishedAt, expired: job.expired, resultDelivered: job.resultDelivered,
 			progress: { total: job.results.length, done: job.results.filter((result) => terminal(result.state)).length },
 			usage: aggregateUsage(job.results.map((result) => result.usage)) }));
 	}
+	/** Notifications are hints; dispatch eligibility is independent of retained results and usage. */
+	pendingNotifications(): CompletionNotice[] {
+		if (this.closed) return [];
+		return [...this.jobs.values()].filter((job) => terminal(job.state) && job.run.background && job.run.notify &&
+			!job.suppressNotification && !job.notificationSent && !job.resultDelivered).map((job) => ({ taskId: job.id,
+				state: job.state, expired: job.expired, usage: aggregateUsage(job.results.map((result) => result.usage)) }));
+	}
+	takeNotifications(): CompletionNotice[] {
+		const notices = this.pendingNotifications();
+		for (const notice of notices) this.get(notice.taskId).notificationSent = true;
+		return notices;
+	}
+	trackDelivery(callId: string, id: string, page: ResultPage, text: string): void {
+		const job = this.jobs.get(id);
+		if (this.closed || !job || job.resultDelivered || page.view !== "output" || !terminal(page.state)) return;
+		this.deliveryAttempts.set(callId, { taskId: id, cursor: page.cursor, end: page.nextCursor ?? page.totalBytes,
+			total: page.totalBytes, hash: createHash("sha256").update(JSON.stringify([{ type: "text", text }])).digest("hex") });
+	}
+	observeDelivery(message: ToolResultMessage): void {
+		const receipt = this.deliveryAttempts.get(message.toolCallId);
+		if (!receipt) return;
+		this.deliveryAttempts.delete(message.toolCallId);
+		const job = this.jobs.get(receipt.taskId);
+		if (this.closed || !job || job.resultDelivered || message.isError || message.toolName !== "subagent_task" ||
+			createHash("sha256").update(JSON.stringify(message.content)).digest("hex") !== receipt.hash) return;
+		if (job.deliveryTotal !== receipt.total) { job.deliveryTotal = receipt.total; job.deliveredRanges = []; }
+		const ranges = [...job.deliveredRanges, [receipt.cursor, receipt.end] as [number, number]].sort((a, b) => a[0] - b[0]);
+		job.deliveredRanges = [];
+		for (const range of ranges) {
+			const last = job.deliveredRanges.at(-1);
+			if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+			else job.deliveredRanges.push(range);
+		}
+		job.resultDelivered = job.deliveredRanges.length === 1 && job.deliveredRanges[0][0] === 0 && job.deliveredRanges[0][1] === receipt.total;
+		if (job.resultDelivered) job.deliveredRanges = [];
+	}
+	clearDeliveryAttempts(): void { this.deliveryAttempts.clear(); }
 	async start(run: ResolvedRun, callerSignal?: AbortSignal, onUpdate?: (details: SubagentDetails) => void): Promise<{ taskId: string; done: Promise<SubagentDetails> }> {
 		// Serialize admission, not execution: two simultaneous calls cannot both miss a writer reservation.
 		const admitted = this.admissions.then(() => this.admit(run, callerSignal, onUpdate));
@@ -144,7 +186,7 @@ export class SessionTasks {
 		if (this.closed || signal?.aborted) { await fs.rm(dir, { recursive: true, force: true }); throw new Error("Subagent launch cancelled"); }
 		const controller = new AbortController();
 		const job: Job = { id, run, controller, files, workspaces, state: "queued", startedAt: Date.now(), expired: false,
-			suppressNotification: false, update, done: undefined!, results: run.tasks.map((task, index) => ({ agent: task.agent,
+			suppressNotification: false, notificationSent: false, resultDelivered: false, deliveredRanges: [], update, done: undefined!, results: run.tasks.map((task, index) => ({ agent: task.agent,
 				agentSource: task.agentSource, task: task.task, model: task.model, thinking: task.thinking,
 				resolved: task, exitCode: -1, state: "queued", itemId: `${id}/${index + 1}`, step: run.mode === "chain" ? index + 1 : undefined,
 				messages: [], stderr: "", usage: emptyUsage(), output: "" })) };
@@ -215,14 +257,19 @@ export class SessionTasks {
 		return job.done;
 	}
 	async cancelWriters(): Promise<void> { await Promise.all([...this.jobs.values()].filter((job) => !terminal(job.state) && job.run.tasks.some((task) => !task.readOnly)).map((job) => this.cancel(job.id, true))); }
-	async cancelAll(suppressNotification = true): Promise<void> { await Promise.all([...this.jobs.values()].filter((job) => !terminal(job.state)).map((job) => this.cancel(job.id, suppressNotification))); }
-	async read(id: string, options: { cursor?: number; maxBytes?: number; view?: "output" | "log" } = {}): Promise<{ text: string; nextCursor: number | null; totalBytes: number; truncated: boolean; state: TaskState }> {
+	async cancelAll(suppressNotification = true): Promise<void> {
+		if (suppressNotification) { for (const job of this.jobs.values()) job.suppressNotification = true; this.clearDeliveryAttempts(); }
+		await Promise.all([...this.jobs.values()].filter((job) => !terminal(job.state)).map((job) => this.cancel(job.id, suppressNotification)));
+	}
+	async read(id: string, options: { cursor?: number; maxBytes?: number; view?: "output" | "log" } = {}): Promise<ResultPage> {
 		const job = this.get(id);
 		if (job.expired) throw new Error("Task artifacts expired; usage and status remain available until metadata eviction");
 		const cursor = options.cursor ?? 0;
 		const maxBytes = Math.min(options.maxBytes ?? 16 * 1024, 50 * 1024);
 		if (!Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error("Invalid result cursor/maxBytes");
 		if (options.view !== undefined && options.view !== "output" && options.view !== "log") throw new Error("Invalid result view");
+		// Admit output reads only after completion, before any asynchronous file snapshots.
+		if (!terminal(job.state) && options.view !== "log") throw new Error("Task is not finished; use status or view: log");
 		const parts = await Promise.all(job.results.map(async (result, index) => {
 			const file = options.view === "log" ? job.files[index].logPath : job.files[index].outputPath;
 			let data: Buffer;
@@ -235,12 +282,10 @@ export class SessionTasks {
 		if (job.expired) throw new Error("Task artifacts expired during read");
 		if (cursor < data.length && (data[cursor] & 0xc0) === 0x80) throw new Error("Result cursor is not a UTF-8 character boundary");
 		if (cursor > data.length) throw new Error("Result cursor exceeds current output length");
-		// A result cursor describes a final stable snapshot; use status/log for running progress.
-		if (!terminal(job.state) && options.view !== "log") throw new Error("Task is not finished; use status or view: log");
 		let end = Math.min(cursor + maxBytes, data.length);
 		while (end > cursor && end < data.length && (data[end] & 0xc0) === 0x80) end--;
 		if (end === cursor && end < data.length) { end++; while (end < data.length && (data[end] & 0xc0) === 0x80) end++; }
-		return { text: data.subarray(cursor, end).toString("utf8"), nextCursor: end < data.length ? end : null, totalBytes: data.length,
+		return { text: data.subarray(cursor, end).toString("utf8"), cursor, view: options.view ?? "output", nextCursor: end < data.length ? end : null, totalBytes: data.length,
 			truncated: job.results.some((result) => options.view === "log" ? result.logTruncated : result.outputTruncated), state: job.state };
 	}
 	private prune(): Promise<void> {
@@ -258,8 +303,10 @@ export class SessionTasks {
 		for (const job of completed) {
 			if (completed.filter((item) => !item.expired).length <= (this.options.maxRetainedJobs ?? 16) && total <= (this.options.maxRetainedBytes ?? 64 * 1024 * 1024)) break;
 			if (job.expired) continue;
+			// Readers must fail closed before deletion can expose a partial/missing snapshot.
+			job.expired = true;
 			await fs.rm(path.dirname(job.files[0].dir), { recursive: true, force: true });
-			job.expired = true; total -= bytes.get(job.id) ?? 0;
+			total -= bytes.get(job.id) ?? 0;
 			for (const result of job.results) { result.messages = []; result.output = undefined; result.stderr = ""; }
 		}
 		// Bounded tombstones: retire accounting rather than forget it when metadata is evicted.
@@ -267,11 +314,12 @@ export class SessionTasks {
 		for (const job of expired.slice(0, Math.max(0, expired.length - 32))) {
 			this.retired = aggregateUsage([this.retired, ...job.results.map((result) => result.usage)]);
 			this.jobs.delete(job.id);
+			for (const [callId, receipt] of this.deliveryAttempts) if (receipt.taskId === job.id) this.deliveryAttempts.delete(callId);
 		}
 	}
 	shutdown(): Promise<void> {
 		if (this.cleanup) return this.cleanup;
-		this.closed = true;
+		this.closed = true; this.clearDeliveryAttempts();
 		for (const job of this.jobs.values()) { job.suppressNotification = true; if (!terminal(job.state)) job.controller.abort(); }
 		this.cleanup = (async () => {
 			await this.admissions;
