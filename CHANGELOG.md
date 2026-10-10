@@ -1,0 +1,53 @@
+# Changelog
+
+User-visible changes are recorded here. `Unreleased` describes changes in the current development branch, not an already-published version. Release entries are reconstructed from the existing immutable Git tags and commit history.
+
+## [Unreleased]
+
+### Added
+
+- Node.js 24 CI on Linux/macOS, with offline tests, type checking, read-only workflow permissions, and commit-pinned Actions.
+- Contribution and security guidance, issue/PR templates, weekly dependency-update proposals, and this changelog.
+
+### Changed
+
+- Restructure README around installation, bounded delegation, result collection, and safety; make compatibility and validation limits explicit.
+- Streamline the coding-agent guide with conditional references, module boundaries, invariants, and a checkable contribution loop.
+- Track complete retained-output delivery through successful finalized tool results and expose `resultDelivered` in task list/status. Delivery is not acceptance; no ACK action is required.
+
+### Fixed
+
+- Recheck and batch busy-parent completion reminders before settlement, suppressing stale wakeups after complete output delivery while preserving reminders for partial/log/error/aborted/redacted reads ([#2](https://github.com/mothieras/pi-subagent/pull/2)).
+- Prevent running-output and eviction/read races from falsely recording complete delivery; suppress pending old-branch reminders during navigation.
+
+## [0.1.2] - 2026-10-09
+
+### Added
+
+- English delegation skill packaged alongside tools and workflow prompts.
+- API reference, coding-agent conventions, documentation link/example tests, and actual skill/package discovery coverage.
+
+### Changed
+
+- Rewrite public documentation in English and archive the original example README for provenance.
+- Keep tool descriptions usable without loading the delegation skill.
+
+## [0.1.1] - 2026-10-08
+
+### Fixed
+
+- Keep Plan Mode implementation imports inside the installed directory so conventional directory-symlink discovery loads the companion correctly.
+
+## [0.1.0] - 2026-10-08
+
+### Added
+
+- Independent isolated child Pi processes with optional Markdown roles and inline configuration.
+- Single, parallel, and sequential delegation; explicit model/tool/source selection, trust checks, and Plan Mode permission enforcement.
+- Session-local background tasks, paginated results, cancellation, write-collision checks, retention limits, and snapshot-based child usage accounting.
+- Optional role/workflow examples, Plan Mode companion, and versioned installation/rollback guidance.
+
+[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/mothieras/pi-subagent/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/mothieras/pi-subagent/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/mothieras/pi-subagent/tree/v0.1.0

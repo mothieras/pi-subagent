@@ -1,41 +1,30 @@
 # Pi Subagent
 
-Task delegation for [Pi](https://github.com/earendil-works/pi), with isolated child contexts, optional Markdown roles, and session-local background execution.
+[![CI](https://github.com/mothieras/pi-subagent/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/mothieras/pi-subagent/actions/workflows/ci.yml)
 
-Delegate a self-contained task without creating a role file, run independent investigations in parallel, or chain implementation and review. Each child runs in a separate Pi process with an explicit tool allowlist.
+Delegate bounded work from [Pi](https://github.com/earendil-works/pi) to independent child Pi processes. Run a single task, parallel investigations, or a sequential implementation/review chain—without creating role files first.
 
-## Features
-
-- **Flexible delegation** — single tasks, parallel task groups, and sequential chains with `{previous}` handoffs.
-- **Optional roles** — reusable Markdown agents or inline prompt/model/tool configuration.
-- **Explicit tool sources** — select trusted extensions and MCP servers rather than inheriting the parent's integrations.
-- **Session-local background work** — task IDs, batched completion reminders, automatic result-delivery tracking, paginated results, and cancellation.
-- **Separate usage accounting** — reported child usage is tracked once in the extension's ledger.
-- **Write-collision checks** — shared-worktree parallel writers require explicit consent.
-
-**Isolation is not an OS sandbox.** Shell commands, extensions, and MCP code retain host permissions. Background tasks do not survive session exit, switching, or reload.
+Each child receives its own context and explicitly selected tools. Background work has session-local task IDs, paginated results, cancellation, and a separate usage ledger.
 
 ## Install
-
-Requires Pi. The current implementation is tested with **Pi 1.1.0, Node.js 24, and macOS**. Automated provider tests use local fakes. Manual macOS smoke tests also covered Terminal/Ghostty TUI, lifecycle cleanup, and read-only background tasks with `openai-codex/gpt-6-luna`. Windows/Linux whole-system behavior and other provider/subscription flows remain unverified.
 
 ```bash
 pi install git:github.com/mothieras/pi-subagent
 ```
 
-Then start a new Pi session or run `/reload` after the current turn finishes. Keep only one implementation of the `subagent` tools enabled.
+Start a new session, or run `/reload` after the current turn finishes. Enable only one implementation of `subagent` / `subagent_task`.
 
-The package exposes the extension, workflow prompts, and the delegation skill. **Sample role files require separate installation.**
+This installs the tools, workflow prompts, and delegation skill. Example roles and the optional Plan Mode companion require separate setup. The package is not published to npm.
 
-See [INSTALL.md](INSTALL.md) for pinned/local installations, sample roles, optional Plan Mode support, upgrades, and rollback. The package is not currently published to npm.
+The command follows the default branch, which may contain unreleased changes. For daily use, [pin a reviewed tag or commit](INSTALL.md#install-as-a-pi-package); see the [changelog](CHANGELOG.md) for released and unreleased changes. This README describes the current checkout.
 
-## Quick start
+## Start with a read-only task
 
-No role file is required. Ask Pi to delegate a bounded investigation, or use this `subagent` call:
+Ask Pi to delegate an investigation, or call `subagent` directly:
 
 ```json
 {
-  "task": "Inspect authentication under src/. Return entry points, file paths, line numbers, and evidence of missing permission checks. Do not modify files.",
+  "task": "Map this repository's entry points and permission checks. Read-only; inspect files in this checkout only. Return paths, line numbers, and unresolved risks.",
   "config": {
     "tools": {
       "allow": ["read", "grep", "find", "ls"],
@@ -46,15 +35,25 @@ No role file is required. Ask Pi to delegate a bounded investigation, or use thi
 }
 ```
 
-Children do **not** receive the parent conversation, context files, or skills. Include the goal, necessary context, scope, constraints, and expected deliverable in every task.
+Include the goal, necessary context, file scope, constraints, and expected deliverable. Children do **not** inherit the parent conversation, context files, skills, extensions, or MCP servers. Model and thinking selection inherit by default; inline configuration can override them.
 
-### Independent tasks
+Choose exactly one execution mode:
+
+| Mode | Use it for |
+| --- | --- |
+| `task` | One self-contained assignment. |
+| `tasks` | Independent assignments in parallel. |
+| `chain` | Dependent steps; `{previous}` passes the preceding retained output. |
+
+Optional Markdown roles make recurring assignments reusable. See the [API reference](docs/API.md) for precedence, models, tool sources, and complete call examples.
+
+## Run work in the background
 
 ```json
 {
   "tasks": [
-    { "task": "Inspect src/auth/ for authorization gaps. Return paths, line numbers, and evidence." },
-    { "task": "Inspect src/storage/ for unsafe persistence. Return paths, line numbers, and evidence." }
+    { "task": "Inspect authentication entry points in this checkout. Read-only; return permission checks and evidence of gaps." },
+    { "task": "Inspect persistence entry points in this checkout. Read-only; return failure handling and evidence of risks." }
   ],
   "config": {
     "tools": { "allow": ["read", "grep", "find", "ls"], "extensions": [], "mcp": [] }
@@ -63,49 +62,49 @@ Children do **not** receive the parent conversation, context files, or skills. I
 }
 ```
 
-Uncollected background results normally notify and wake the parent. Read them using `subagent_task` with `action: "result"` and the returned task ID; follow `nextCursor` for additional pages. Complete final output delivery automatically consumes pending reminders—no ACK call is needed. Status, log, and partial reads do not consume them. Already-collected results remain available for rereading; busy-parent reminders are rechecked and batched before settlement.
-
-### Dependent steps
-
-Use `chain` when a step needs its predecessor's output:
+Keep the returned task ID. Uncollected completion normally wakes the parent; the notification contains metadata, not the report. Retrieve missing output separately:
 
 ```json
 {
-  "chain": [
-    { "task": "Investigate authentication under src/. Return relevant paths and evidence." },
-    { "task": "Create an implementation plan from these findings; do not implement:\n{previous}" }
-  ],
-  "config": {
-    "tools": { "allow": ["read", "grep", "find", "ls"], "extensions": [], "mcp": [] }
-  }
+  "action": "result",
+  "taskId": "<returned-task-id>"
 }
 ```
 
-Run shared-worktree implementation/review sequentially. Prefer separate worktrees for parallel writers; this extension does not create worktrees or merge changes.
+Follow the returned `nextCursor` until it is `null`. Complete final output delivery consumes pending reminders automatically; status, log, and partial reads do not. Delivery is **not** acceptance or verification. Already-collected output remains readable, and busy-parent reminders are rechecked and batched before settlement.
 
-## Documentation
+Background tasks and retained results do not survive exit, session switch, or reload. Save important findings first. Child usage appears in `subagent_task` list/status, not Pi's native `/session` totals.
 
-- [API reference](docs/API.md) — parameters, roles, configuration precedence, tool sources, lifecycle, usage, and limits.
-- [Installation](INSTALL.md) — installation options, upgrades, and rollback.
-- [Delegation skill](skills/pi-subagent/SKILL.md) — a short agent-facing guide to handoffs and verification; explicitly load it with `/skill:pi-subagent <task>` after installation.
-- [Development conventions](AGENTS.md) — repository boundaries and change/verification rules.
+## Safety boundaries
 
-Tool descriptions remain usable without loading the skill. The skill guides the parent; it does not change child isolation or permissions.
+**Isolation is not an OS sandbox.** Tools and executable sources retain host permissions; `cwd` does not restrict filesystem access.
 
-## Development
+- Defaults include write-capable tools. Use an explicit read-only allowlist for investigations.
+- Children receive only selected extensions/MCP sources. Untrusted project roles and executable sources require approval; no UI does not imply approval.
+- Shared-worktree parallel writers require explicit consent. Prefer separate worktrees or sequential implementation/review; this extension creates neither worktrees nor merges.
+- Verify child output before integration. Completion messages grant no permissions, and cancellation does not roll back changes.
 
-```bash
-git clone https://github.com/mothieras/pi-subagent.git
-cd pi-subagent
-npm ci --ignore-scripts
-npm run check
-npm test
-```
+See the [permission contract](docs/API.md#external-tools-and-trust) and [security policy](SECURITY.md).
 
-Tests use fake local models/MCP servers and isolated temporary directories. They do not call real providers or modify the active Pi installation. Coverage includes configuration, source selection, permission gates, process cleanup, background wakeups and delivery suppression, accounting, result pagination, and package/skill discovery.
+## Compatibility and verification
 
-Automated tests do not establish real-provider compatibility or interactive TUI behavior. Review the conventions in [AGENTS.md](AGENTS.md) before changing public contracts.
+The development host baseline is **Pi 1.1.0 / Node.js 24**. CI targets Linux and macOS with local fake providers/MCP servers; green runs establish automated coverage, not universal platform or provider support.
+
+Manual macOS smoke tests covered Terminal/Ghostty TUI, lifecycle cleanup, and read-only background delegation with `openai-codex/gpt-6-luna`. Windows whole-system behavior, other provider/subscription flows, and broader interactive configurations remain unverified.
+
+## Documentation and contributing
+
+| Need | Read |
+| --- | --- |
+| Setup, roles, Plan Mode, upgrade, or rollback | [Installation](INSTALL.md) |
+| Parameters, precedence, permissions, lifecycle, usage, or limits | [API reference](docs/API.md) |
+| Agent-facing delegation guidance | [Delegation skill](skills/pi-subagent/SKILL.md) |
+| Report a bug, propose a change, or run development checks | [Contributing](CONTRIBUTING.md) |
+| Repository rules for coding agents | [AGENTS.md](AGENTS.md) |
+| Release history | [Changelog](CHANGELOG.md) |
+
+Contributions are welcome. Start with a small, reproducible issue or focused PR; discuss public-contract or permission changes before implementing them. Tool descriptions remain usable without the skill; `/skill:pi-subagent <task>` explicitly loads the installed guide.
 
 ## License and attribution
 
-[MIT](LICENSE). Derived from the official subagent example in `@earendil-works/pi-coding-agent` 1.1.0, with upstream attribution retained. This repository maintains its own implementation; the [original example README](docs/upstream-example.md) is archived for provenance.
+[MIT](LICENSE). Derived from the official subagent example in `@earendil-works/pi-coding-agent` 1.1.0, with upstream attribution retained. This repository maintains an independent implementation; the [original example README](docs/upstream-example.md) is archived for provenance.

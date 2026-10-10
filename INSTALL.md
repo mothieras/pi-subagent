@@ -3,7 +3,7 @@
 ## Requirements
 
 - Pi, with child processes able to resolve its model configuration and credentials.
-- The verified baseline is Pi 1.1.0 / Node.js 24 / macOS. Other platforms and real provider/subscription flows require manual verification.
+- See [compatibility and verification](README.md#compatibility-and-verification) for the host baseline, CI targets, and manual-validation limits. Automated checks do not establish every platform or provider/subscription flow.
 - Git for repository-based installs. This package is not currently published to npm.
 
 Only enable one implementation of `subagent` / `subagent_task`. If using Plan Mode, also keep only one `/plan` extension. Disable an older implementation before enabling this one, and record its previous configuration/link targets.

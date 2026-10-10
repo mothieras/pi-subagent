@@ -14,11 +14,13 @@ async function markdownFiles(directory: string): Promise<string[]> {
 	return nested.flat();
 }
 
-test("public Markdown relative links resolve after the documentation reorganization", async () => {
-	const documents = ["README.md", "INSTALL.md", "AGENTS.md", ...(await Promise.all(["docs", "skills", "agents", "prompts"].map(markdownFiles))).flat()];
+test("public Markdown relative links resolve", async () => {
+	const documents = ["README.md", "INSTALL.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
+		...(await Promise.all(["docs", "skills", "agents", "prompts", ".github"].map(markdownFiles))).flat()];
 	for (const document of documents) {
 		const body = await fs.readFile(document, "utf8");
-		for (const match of body.matchAll(/\[[^\]]*\]\(([^\s)]+)\)/g)) {
+		const links = [...body.matchAll(/\[[^\]]*\]\(([^\s)]+)\)/g), ...body.matchAll(/^\[[^\]]+\]:\s+(\S+)/gm)];
+		for (const match of links) {
 			const target = match[1].split("#")[0];
 			if (!target || /^[a-z][a-z\d+.-]*:/i.test(target)) continue;
 			const resolved = path.resolve(path.dirname(document), decodeURIComponent(target));
