@@ -75,6 +75,9 @@ test("issue forms have unique fields, required reproducible input and privacy gu
 
 test("changelog covers the current release and unreleased work without changing publication policy", async () => {
 	const manifest = JSON.parse(await fs.readFile("package.json", "utf8"));
+	const lock = JSON.parse(await fs.readFile("package-lock.json", "utf8"));
+	assert.equal(lock.version, manifest.version);
+	assert.equal(lock.packages[""].version, manifest.version);
 	const changelog = await fs.readFile("CHANGELOG.md", "utf8");
 	assert.ok(changelog.includes("## [Unreleased]"));
 	assert.ok(changelog.includes(`## [${manifest.version}] - `));
