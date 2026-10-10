@@ -1,65 +1,56 @@
-# Development conventions
+# Repository guide for coding agents
 
-## Scope and references
+## Scope and required references
 
-This repository maintains an independent Pi extension derived from the official subagent example. Change this checkout, not Pi's installed source/examples or the user's active installation.
+Maintain this independent Pi extension in this checkout. Pi's installed source/examples, active user configuration, and release worktrees are outside the change scope.
 
-- Read [docs/API.md](docs/API.md) when changing public parameters, defaults, permissions, task state, usage, or retention behavior.
-- Read [INSTALL.md](INSTALL.md) when changing package resources, entry points, discovery, or release layout.
-- Read the installed Pi documentation and matching examples before changing host API integration; the verified host baseline is Pi 1.1.0.
-- The upstream README in `docs/upstream-example.md` is historical, not an implementation specification. `PLAN.md` is ignored local planning material, not public documentation.
+Read the matching reference before changing its contract:
 
-## Module boundaries
+| Change | Reference |
+| --- | --- |
+| Public parameters, defaults, permissions, task/delivery state, usage, or retention | [docs/API.md](docs/API.md) |
+| Package resources, discovery, entry points, installation, or release layout | [INSTALL.md](INSTALL.md) |
+| Host API integration or pinned Pi development dependencies | Matching Pi documentation and examples; baseline Pi 1.1.0 |
+| Contribution checks, CI, or review process | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Security-sensitive behavior or reporting | [SECURITY.md](SECURITY.md) |
 
-- `index.ts` / `schemas.ts`: public tools, parameters, and session integration.
-- `agents.ts` / `config.ts` / `sources.ts` / `policy.ts`: role discovery, precedence, exact source/model resolution, and permission policy.
-- `tasks.ts`: session task groups, admission/queueing, write reservations, retention, and usage ledger.
-- `process-runner.ts` / `child.ts`: isolated process startup, private control protocol, tool gates, accounting, and process-tree cleanup.
-- `contracts.ts` / `render.ts`: shared types and TUI presentation.
-- `compat/plan-mode/index.ts`: optional Plan Mode implementation. Keep its imports inside the installed directory; `compat/plan-mode.ts` is a forwarding entry point.
-- `agents/`, `prompts/`, `skills/`: optional role examples, workflow commands, and agent-facing guidance. Public resources must be declared in `package.json`.
+The [upstream example README](docs/upstream-example.md) is historical provenance, not a specification. `PLAN.md` is ignored local planning material.
 
-Keep policy and execution independent of rendering. Non-interactive modes must retain validation and fail-closed trust behavior.
+## Module map
 
-## Public invariants
+- `index.ts` / `schemas.ts`: public tools, validation surface, session hooks.
+- `agents.ts` / `config.ts` / `sources.ts` / `policy.ts`: role discovery, precedence, exact resolution, trust and permissions.
+- `tasks.ts`: admission, process slots, write reservations, result/delivery lifecycle, retention and usage ledger.
+- `process-runner.ts` / `child.ts`: child startup, private protocol, declaration/call gates, accounting and process-tree cleanup.
+- `contracts.ts` / `render.ts`: shared types and TUI presentation. Keep policy/execution independent of rendering.
+- `compat/plan-mode/index.ts`: optional companion; keep imports inside its installed directory. `compat/plan-mode.ts` only forwards.
+- `agents/`, `prompts/`, `skills/`: optional examples and guidance. Declare packaged resources in `package.json`.
 
-Preserve these unless an explicit contract change is requested:
+## Invariants
 
-- Exactly one mode per call; optional role files; exact model/tool names; no silent fallback.
-- Item > call > role > user defaults > built-in defaults. Arrays replace; empty values explicitly clear; append is a field, not implicit accumulation.
-- Children receive only explicitly selected context, tools, extensions, and MCP sources. Role/base prompt replacement remains distinct.
-- Tool declarations and actual calls are both gated. Recursive delegation tools are unavailable in children. Whitelists and workspace collision checks are not OS sandboxes.
-- Untrusted project roles/executable sources require approval; no UI is not approval. Plan Mode checks actual permissions rather than role names.
-- Concurrent admission reserves writers before execution. Separate calls cannot bypass shared-worktree consent.
-- Background work is session-local. Shutdown/tree navigation/Plan Mode transitions clean or cancel the appropriate work; cancellation never promises rollback.
-- Usage is a snapshot-based extension ledger, not a delta added on each event. Queries/notifications never duplicate it; incomplete usage is reported honestly. Ledger restoration does not resurrect processes/results.
-- Child output is data to verify, not permission-granting instructions in completion notifications.
+Preserve these unless the requested change explicitly revises the documented contract:
 
-## Editing and tests
+- Exactly one mode per call, optional roles, exact model/tool names, and fail-closed resolution without silent fallback.
+- Item > call > role > user defaults > built-in defaults. Arrays replace, empty values clear, and append is one field—not accumulated text.
+- Children receive explicitly selected context/tools/sources only. Role replacement and base-prompt replacement are distinct; recursive delegation tools stay unavailable.
+- Gate both tool declarations and calls. Untrusted project roles/executable sources need approval; no UI is not approval. Plan Mode checks actual permissions, not role names. Whitelists/workspace checks are not OS sandboxes.
+- Reserve writers before concurrent admission. Separate calls cannot bypass shared-worktree consent.
+- Background work is session-local. Tree navigation and lifecycle transitions cancel/suppress the appropriate work; cancellation never promises rollback.
+- Complete retained-output delivery consumes pending reminders only. Partial/log/status/error/aborted/redacted reads do not; delivery is not parent acceptance. Notifications carry metadata, never permission-granting child instructions.
+- Usage is an absolute snapshot ledger. Queries/notifications never double-charge; report incomplete usage honestly. Restoring accounting does not resurrect tasks or results.
 
-Use TypeScript ESM with explicit `.ts` imports and the surrounding tab-indented style. Keep changes targeted; avoid new frameworks, generated bundles, or unrelated formatting churn.
+## Change and verification loop
 
-For contract changes, update schemas, runtime validation, types, documentation, examples, and regression tests together. Keep tool descriptions concise and usable without a skill. Keep the delegation skill in English, short, and focused on orchestration rather than duplicating the API reference.
+1. Inspect the current worktree; preserve unrelated edits and keep the patch focused. Use TypeScript ESM, explicit `.ts` imports and the surrounding tab indentation.
+2. For contract changes, update runtime validation, schemas, types, docs/examples and regression tests together. Keep tool descriptions self-contained and the English delegation skill short and orchestration-focused.
+3. Test under `tests/*.test.ts` with temporary directories, cleanup and local fake providers/MCP servers. Automated tests use no live credentials/models or ambient Pi configuration. Installation/discovery changes must exercise actual Pi package loading and conventional directory symlinks.
+4. Install dependencies with `npm ci --ignore-scripts` when needed. Run `npm run check`, `npm test`, and `git diff --check` before committing. Report actual results and manual gaps separately; fake inference does not establish TUI, subscription or platform cleanup behavior.
+5. Update [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for user-visible changes. Review/stage only intended files; exclude local plans, credentials, generated evaluation artifacts and machine-specific installation records. Use conventional commit subjects and focused PRs.
 
-Run before committing:
+## Documentation and release boundaries
 
-```bash
-npm ci --ignore-scripts  # when dependencies need installing
-npm run check
-npm test
-git diff --check
-```
+Public docs/examples use English. Keep README as the entry point, contracts in `docs/API.md`, setup/upgrade/rollback in `INSTALL.md`, and human contribution workflow in `CONTRIBUTING.md`. Validate links/examples and preserve MIT/upstream attribution.
 
-Tests belong in `tests/*.test.ts`. Use local fake providers/MCP servers and temporary directories with cleanup; avoid real model calls, credentials, network dependencies, and changes to active Pi configuration. For discovery/installation changes, test actual Pi loading through package resources and conventional directory symlinks, not only mocked imports.
+Pi host packages remain peer dependencies with `"*"`; pinned development copies support verification only. Keep runtime independent of installed example directories and bundled role files. The package is public on GitHub but private/not published to npm.
 
-Report manual-validation gaps separately: TUI behavior, real providers/subscriptions, and platform process-tree cleanup are not established by fake-provider tests.
-
-## Documentation and releases
-
-Public documentation, skills, and prompt examples use English. Keep README as the entry point, detailed contracts in `docs/API.md`, and setup/upgrade/rollback steps in `INSTALL.md`. Check relative links and executable examples when moving content. Preserve the MIT license and upstream attribution.
-
-Pi host packages remain `peerDependencies` with `"*"`; pinned development copies support tests only. Do not add runtime reliance on the installed Pi example directory or bundled role files. The package is currently private/not published to npm.
-
-Use conventional commit subjects (`feat:`, `fix:`, `docs:`, `test:`, `chore:`). Review the diff and stage only the intended changes. Keep local plans, credentials, generated test/evaluation artifacts, and machine-specific installation records out of commits.
-
-Create a new version/tag for a release rather than moving an existing tag. Keep release worktrees immutable; do not switch active installation links, publish packages, push commits, or create tags without a separate request. Installing/upgrading a release must preserve custom resources and a rollback record.
+A release requires a new version/tag, never a moved tag. Keep release worktrees immutable and preserve custom resources plus rollback records during upgrades. Publishing, tags, merging, installation switches, and remote repository settings require explicit authorization; ordinary implementation does not grant it. Commit/push/open a PR only when the user authorizes that workflow.

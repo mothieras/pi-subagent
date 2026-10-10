@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem with delegation, permissions, lifecycle, or installation.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Redact credentials, private prompts/reports, account details, and local paths.
+        For a suspected vulnerability, follow SECURITY.md instead of posting exploit details.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include extension tag/commit, Pi and Node versions, OS, and installation method. Name a provider only if relevant; never include credentials.
+      placeholder: "pi-subagent tag/commit; Pi version; Node version; OS; Git package/local/symlink install"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include redacted tool arguments or commands and event order. Prefer local fake inference; say if the observation requires a real provider or TUI.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what happened, not just what might be wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence and workaround
+      description: Optional relevant errors, test result, timing, or workaround. Avoid full transcripts and configuration files.
