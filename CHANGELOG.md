@@ -4,7 +4,9 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ## [Unreleased]
 
-No unreleased changes.
+### Changed
+
+- Upgrade and pin the development TypeScript compiler from 5.9.3 to 7.0.2, keeping the Node.js 24 and Pi 1.1.0 baselines unchanged.
 
 ## [0.1.3] - 2026-10-11
 
