@@ -7,6 +7,7 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 ### Changed
 
 - Upgrade and pin the development TypeScript compiler from 5.9.3 to 7.0.2, keeping the Node.js 24 and Pi 1.1.0 baselines unchanged.
+- Update the development YAML parser from 2.9.0 to 2.9.1 without changing the pinned Pi host dependencies.
 
 ## [0.1.3] - 2026-10-11
 
