@@ -41,7 +41,7 @@ The maintainer reviews scope, compatibility, tests, and security implications be
 
 ## CI and dependency maintenance
 
-[CI](.github/workflows/ci.yml) runs on pull requests, pushes to `master`, and manual dispatch. Node.js 24 jobs on Linux/macOS install locked dependencies without lifecycle scripts, type-check, run offline tests, check whitespace, and verify that the checkout stays clean. Jobs use a read-only token and no provider secrets. Actions are pinned to full commit SHAs.
+[CI](.github/workflows/ci.yml) runs on pull requests (including base-branch edits), pushes to `master`, and manual dispatch. Node.js 24 jobs on Linux/macOS install locked dependencies without lifecycle scripts, type-check, run offline tests, check whitespace, and verify that the checkout stays clean. Jobs use a read-only token and no provider secrets. Actions are pinned to full commit SHAs.
 
 Windows is not in the matrix. Read the individual run and skipped cases before claiming platform support. Interactive TUI and real-provider behavior still need scoped manual validation.
 

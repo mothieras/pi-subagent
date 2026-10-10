@@ -12,6 +12,7 @@ async function yaml(file: string): Promise<any> {
 test("CI validates the baseline on hosted POSIX runners without elevated PR permissions", async () => {
 	const workflow = await yaml(".github/workflows/ci.yml");
 	assert.ok("pull_request" in workflow.on);
+	assert.deepEqual(workflow.on.pull_request.types, ["opened", "synchronize", "reopened", "edited"]);
 	assert.ok("workflow_dispatch" in workflow.on);
 	assert.deepEqual(workflow.on.push.branches, ["master"]);
 	assert.ok(!("pull_request_target" in workflow.on));

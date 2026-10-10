@@ -6,7 +6,7 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ### Added
 
-- Node.js 24 CI on Linux/macOS, with offline tests, type checking, read-only workflow permissions, and commit-pinned Actions.
+- Node.js 24 CI on Linux/macOS, with offline tests, type checking, read-only workflow permissions, commit-pinned Actions, and revalidation after PR base changes.
 - Contribution and security guidance, issue/PR templates, weekly dependency-update proposals, and this changelog.
 
 ### Changed
