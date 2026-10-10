@@ -36,7 +36,7 @@ const common = {
 	cwd: Type.Optional(exactName()),
 	agentScope: Type.Optional(stringEnum(["user", "project", "both"] as const)),
 	background: Type.Optional(Type.Boolean({ description: "Run in the background and immediately return a task ID.", default: false })),
-	notify: Type.Optional(Type.Boolean({ description: "Notify the parent when a background run finishes.", default: true })),
+	notify: Type.Optional(Type.Boolean({ description: "Notify the parent about completed background results not already delivered in full.", default: true })),
 	allowSharedWrites: Type.Optional(Type.Boolean({ description: "Explicitly permit parallel writers sharing a working directory.", default: false })),
 };
 

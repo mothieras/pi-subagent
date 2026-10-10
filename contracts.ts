@@ -93,6 +93,24 @@ export interface SubagentDetails {
 	taskId?: string;
 	state?: TaskState;
 	usage?: UsageStats;
+	/** Complete retained output reached successful finalized parent tool results; not acceptance. */
+	resultDelivered?: boolean;
+	expired?: boolean;
+}
+export interface CompletionNotice {
+	taskId: string;
+	state: TaskState;
+	expired: boolean;
+	usage: UsageStats;
+}
+export interface ResultPage {
+	text: string;
+	cursor: number;
+	view: "output" | "log";
+	nextCursor: number | null;
+	totalBytes: number;
+	truncated: boolean;
+	state: TaskState;
 }
 export interface ChildConfig {
 	task: ResolvedTask;

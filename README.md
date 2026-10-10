@@ -9,7 +9,7 @@ Delegate a self-contained task without creating a role file, run independent inv
 - **Flexible delegation** — single tasks, parallel task groups, and sequential chains with `{previous}` handoffs.
 - **Optional roles** — reusable Markdown agents or inline prompt/model/tool configuration.
 - **Explicit tool sources** — select trusted extensions and MCP servers rather than inheriting the parent's integrations.
-- **Session-local background work** — task IDs, completion notifications, status, paginated results, and cancellation.
+- **Session-local background work** — task IDs, batched completion reminders, automatic result-delivery tracking, paginated results, and cancellation.
 - **Separate usage accounting** — reported child usage is tracked once in the extension's ledger.
 - **Write-collision checks** — shared-worktree parallel writers require explicit consent.
 
@@ -17,7 +17,7 @@ Delegate a self-contained task without creating a role file, run independent inv
 
 ## Install
 
-Requires Pi. The current implementation is tested with **Pi 1.1.0, Node.js 24, and macOS**. Windows/Linux whole-system behavior and real provider/subscription flows still need manual verification.
+Requires Pi. The current implementation is tested with **Pi 1.1.0, Node.js 24, and macOS**. Automated provider tests use local fakes. Manual macOS smoke tests also covered Terminal/Ghostty TUI, lifecycle cleanup, and read-only background tasks with `openai-codex/gpt-6-luna`. Windows/Linux whole-system behavior and other provider/subscription flows remain unverified.
 
 ```bash
 pi install git:github.com/mothieras/pi-subagent
@@ -63,7 +63,7 @@ Children do **not** receive the parent conversation, context files, or skills. I
 }
 ```
 
-Background completion normally notifies and wakes the parent. Read the result using `subagent_task` with `action: "result"` and the returned task ID; follow `nextCursor` for additional pages.
+Uncollected background results normally notify and wake the parent. Read them using `subagent_task` with `action: "result"` and the returned task ID; follow `nextCursor` for additional pages. Complete final output delivery automatically consumes pending reminders—no ACK call is needed. Status, log, and partial reads do not consume them. Already-collected results remain available for rereading; busy-parent reminders are rechecked and batched before settlement.
 
 ### Dependent steps
 
@@ -102,7 +102,7 @@ npm run check
 npm test
 ```
 
-Tests use fake local models/MCP servers and isolated temporary directories. They do not call real providers or modify the active Pi installation. Coverage includes configuration, source selection, permission gates, process cleanup, background wakeups, accounting, result pagination, and package/skill discovery.
+Tests use fake local models/MCP servers and isolated temporary directories. They do not call real providers or modify the active Pi installation. Coverage includes configuration, source selection, permission gates, process cleanup, background wakeups and delivery suppression, accounting, result pagination, and package/skill discovery.
 
 Automated tests do not establish real-provider compatibility or interactive TUI behavior. Review the conventions in [AGENTS.md](AGENTS.md) before changing public contracts.
 

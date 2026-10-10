@@ -38,10 +38,10 @@ Use `rolePrompt` for temporary role instructions; `systemPrompt` replaces Pi's b
 
 ## 4. Collect and verify results
 
-Read foreground results directly. Use `background: true` when there is independent work to continue, and retain the returned task ID. Completion wakes the parent by default, so repeated polling is unnecessary.
+Read foreground results directly. Use `background: true` when there is independent work to continue, and retain the returned task ID. Uncollected completion normally wakes the parent, so repeated polling is unnecessary.
 
-- After a notification, call `subagent_task` with `action: "result"`; the notification is not the task output.
-- Continue pages using the returned `nextCursor` until it is `null`. It is a byte offset; do not calculate it yourself.
+- After a notification, retrieve missing output with `subagent_task` and `action: "result"`; reuse any complete result already available. Notifications contain metadata, not reports.
+- Continue pages using the returned `nextCursor` until it is `null`. Complete final output delivery automatically consumes pending reminders; status, log, and partial reads do not. No ACK call is needed, and delivery does not mean acceptance.
 - For a running task, inspect `status` or `result` with `view: "log"`. Read changing log snapshots from `cursor: 0`. Arrange your own status checks when `notify: false`.
 - On failure/cancellation, inspect state and error evidence before retrying. Cancellation does not undo changes already made.
 

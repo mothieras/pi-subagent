@@ -22,7 +22,7 @@ Shared options:
 | `config` | Resolved defaults | Common configuration, overridden by item configuration. |
 | `agentScope` | `"user"` | Role discovery: `"user"`, `"project"`, or `"both"`. |
 | `background` | `false` | Return a session-local task group ID after validation, approval, and registration. |
-| `notify` | `true` | Notify and wake the parent when a background group finishes. |
+| `notify` | `true` | Notify and wake the parent about finished background groups whose complete results have not already been delivered. |
 | `allowSharedWrites` | `false` | Explicit consent for overlapping parallel writers. |
 
 ### Inline configuration
@@ -142,8 +142,8 @@ Configuration is reread on each call. Only user configuration is loaded; project
 
 | Action | Required fields | Result |
 | --- | --- | --- |
-| `list` | `action` | Known groups and complete extension usage totals. |
-| `status` | `action`, `taskId` | Group/item state, resolved configuration, diagnostics, and usage. |
+| `list` | `action` | Known groups, result-delivery state, and complete extension usage totals. |
+| `status` | `action`, `taskId` | Group/item state, result-delivery state, resolved configuration, diagnostics, and usage. |
 | `result` | `action`, `taskId` | Retained output or log page. |
 | `cancel` | `action`, `taskId` | Cancel active processes and queued items. |
 
@@ -159,17 +159,30 @@ Configuration is reread on each call. Only user configuration is loaded; project
 }
 ```
 
-Continue with the returned `nextCursor` until it is `null`. Use returned offsets rather than splitting UTF-8 characters yourself. Very small pages may expand to one whole character. A running log is a changing snapshot: read from cursor 0; after completion it can be paged stably.
+Pages include their starting `cursor`, `view`, `nextCursor`, `totalBytes`, task `state`, and `truncated` flag. Continue with the returned `nextCursor` until it is `null`. Use returned offsets rather than splitting UTF-8 characters yourself. Very small pages may expand to one whole character. A running log is a changing snapshot: read from cursor 0; after completion it can be paged stably.
+
+### Result delivery
+
+Execution completion, result delivery, and parent acceptance are distinct. `list` and `status` expose `resultDelivered`: the entire retained final output snapshot has reached successful, unchanged, finalized `subagent_task` output results in the parent. This is automatic bookkeeping, not an acknowledgment action or a claim that the parent accepted, verified, or integrated the report.
+
+- Delivery requires every byte from cursor 0 to the end. Overlapping or out-of-order pages can complete coverage; a final page alone does not.
+- Status/list queries, log reads, partial output, invalid or aborted reads, and error/redacted tool results do not consume completion reminders.
+- Complete output delivery applies equally to successful, failed, and cancelled groups. It consumes only pending reminders, never changes execution status, removes results, extends retention, or charges usage again.
+- Truncated output can be delivered completely **as retained**; omitted bytes remain unavailable and a warning is included in the tool result.
+
+Result reads remain repeatable. Foreground delegation still returns output directly and never schedules completion reminders. Delivery bookkeeping described here concerns retained output reads; it is session-local and is not restored after reload/resume.
 
 ### Background lifecycle
 
 `background: true` returns a group ID without waiting for the model. Each item also has an `itemId`. Background work is not tied to the launching turn's abort signal.
 
-Completion/failure/explicit cancellation normally queues a `followUp`: busy parents receive it afterward; idle parents start a new turn. That parent turn can incur model usage. `notify: false` disables the automatic wakeup.
+Completion/failure/explicit cancellation creates an eligible reminder when `notify: true` (the default). While the parent is busy, eligibility stays inside the extension rather than in the host's non-revocable follow-up queue. At `agent_before_settle`, the extension rechecks delivery and batches remaining reminders into one metadata-only continuation. Results already delivered in full do not request a duplicate read or another model turn.
 
-Notifications contain ID/state, not arbitrary child output as new instructions. They grant no permissions. Read results separately and verify them before integration.
+Idle completions still wake the parent automatically. A session-scoped idle recheck covers busy operations such as manual compaction or aborted runs that may not reach the pre-settlement hook. The resulting parent turn can incur model usage. `notify: false` disables automatic reminders and wakeups, not result retrieval.
 
-Exit, session switch, and reload clean processes, timers, listeners, and temporary artifacts. `/tree` navigation cancels active work so old-branch results cannot wake a new branch. Tasks/results are not restored; only the usage ledger is restored. SIGKILL, system crashes, and deliberately detached/escaped processes cannot be guaranteed cleanup. Cancellation does not roll back changes or external actions.
+Notifications contain group IDs, states, expiration markers, and usage metadata, not arbitrary child output as new instructions. They grant no permissions. Retrieve missing results separately; reuse complete results already available and verify them before integration. Notifications are best-effort hints, not a durable delivery protocol. Once handed to the host they cannot be selectively revoked; later delivery bookkeeping does not retract an already-dispatched message. Other extensions can alter context or continuation, so `resultDelivered` is not proof that a provider used the output.
+
+Exit, session switch, and reload clean processes, timers, listeners, delivery bookkeeping, and temporary artifacts. `/tree` navigation cancels active work and suppresses pending reminders from the old branch, including completed groups. Known completed state/results/usage remain queryable subject to retention. Tasks/results are not restored; only the usage ledger is restored. SIGKILL, system crashes, and deliberately detached/escaped processes cannot be guaranteed cleanup. Cancellation does not roll back changes or external actions.
 
 ### Parallel writers
 
