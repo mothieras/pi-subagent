@@ -1,8 +1,12 @@
 # Changelog
 
-User-visible changes are recorded here. `Unreleased` describes changes in the current development branch, not an already-published version. Release entries are reconstructed from the existing immutable Git tags and commit history.
+User-visible changes are recorded here. `Unreleased` describes changes in the current development branch, not an already-published version. The v0.1.0–v0.1.2 entries were reconstructed from immutable Git tags and commit history.
 
 ## [Unreleased]
+
+No unreleased changes.
+
+## [0.1.3] - 2026-10-11
 
 ### Added
 
@@ -47,7 +51,8 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 - Session-local background tasks, paginated results, cancellation, write-collision checks, retention limits, and snapshot-based child usage accounting.
 - Optional role/workflow examples, Plan Mode companion, and versioned installation/rollback guidance.
 
-[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/mothieras/pi-subagent/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/mothieras/pi-subagent/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mothieras/pi-subagent/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mothieras/pi-subagent/tree/v0.1.0
