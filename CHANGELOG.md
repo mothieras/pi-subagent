@@ -4,6 +4,10 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ## [Unreleased]
 
+### Fixed
+
+- Count running/cancelling child items rather than delegation groups in the TUI footer, and show queued items separately, including future chain steps.
+
 ## [0.1.4] - 2026-10-12
 
 ### Added

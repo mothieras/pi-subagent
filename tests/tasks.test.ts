@@ -98,6 +98,32 @@ test("queued cancellation never launches remaining children and releases queue l
 	await manager.cancel(started.taskId);
 	assert.equal(launched, 1); assert.ok(manager.status(started.taskId).results.every((r) => r.state === "cancelled"));
 });
+test("activity counts queued and cancelling child items without charging usage", async (t) => {
+	let ready: () => void = () => {}; let launched = 0;
+	const startedChild = new Promise<void>((resolve) => { ready = resolve; });
+	const { manager } = await fixture(t, { concurrency: 1, runner: async (input, _files, signal, update) => {
+		launched++; const partial = result(input); update(partial);
+		await new Promise<void>((resolve) => {
+			const abort = () => { update(partial); resolve(); };
+			if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+			ready();
+		});
+		return { ...partial, state: "cancelled", exitCode: 1 };
+	} });
+	assert.deepEqual(manager.activity(), { active: 0, queued: 0 });
+	const started = await manager.start(run({ mode: "parallel", background: true, tasks: [task(), task()] }));
+	await startedChild;
+	assert.deepEqual(manager.activity(), { active: 1, queued: 1 });
+	const cancelled = manager.cancel(started.taskId);
+	assert.equal(manager.status(started.taskId).results[0].state, "cancelling");
+	assert.deepEqual(manager.activity(), { active: 1, queued: 1 });
+	for (let i = 0; i < 10; i++) manager.activity();
+	assert.equal(manager.usage().input, 10);
+	await cancelled;
+	assert.equal(launched, 1);
+	assert.deepEqual(manager.activity(), { active: 0, queued: 0 });
+	assert.equal(manager.usage().input, 10);
+});
 test("parallel writable loadouts require explicit shared-worktree consent; chains and separate trees are allowed", async (t) => {
 	const { manager } = await fixture(t);
 	const writable = task({ readOnly: false, tools: { allow: ["bash"], extensions: [], mcp: [] } });
