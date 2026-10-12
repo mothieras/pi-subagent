@@ -10,13 +10,13 @@ Only enable one implementation of `subagent` / `subagent_task`. If using Plan Mo
 
 ## Install as a Pi package
 
-Install a reviewed npm release:
+Install the latest published npm release:
 
 ```bash
-pi install npm:@mothieras/pi-subagent@0.1.5
+pi install npm:@mothieras/pi-subagent
 ```
 
-Versioned npm specifications stay pinned; choose a new version deliberately when upgrading. To track the latest published npm release, omit `@0.1.5` and update with `pi update npm:@mothieras/pi-subagent`. Git commits alone do not update npm installations.
+Update with `pi update npm:@mothieras/pi-subagent`. To pin a specific release, use `pi install npm:@mothieras/pi-subagent@<version>`; versioned npm specifications stay pinned, so choose a new version deliberately when upgrading. Git commits alone do not update npm installations.
 
 Alternatively, install from Git:
 
@@ -135,7 +135,7 @@ These checks may call a real model and incur usage; the repository's automated t
 ## Upgrade
 
 - **Pinned Git package:** select a new reviewed tag/commit rather than moving an existing tag. Pi recognizes the same repository identity, so inspect the resulting declaration with `pi list`.
-- **npm package:** select a new reviewed version with `pi install npm:@mothieras/pi-subagent@<version>`. Unversioned installs can be updated with `pi update npm:@mothieras/pi-subagent`. Inspect the resulting declaration with `pi list`.
+- **npm package:** update an unversioned install with `pi update npm:@mothieras/pi-subagent`. For a pinned install, select a new reviewed version with `pi install npm:@mothieras/pi-subagent@<version>`. Inspect the resulting declaration with `pi list`.
 - **Unpinned package:** `pi update git:github.com/mothieras/pi-subagent` reconciles the repository checkout.
 - **Local/fixed release:** prepare and verify the new checkout/worktree, record old link targets, then switch the extension and installed companion/roles/prompts/skill together. Record newly added resources separately.
 
