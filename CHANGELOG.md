@@ -4,9 +4,11 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-12
+
 ### Fixed
 
-- Count running/cancelling child items rather than delegation groups in the TUI footer, and show queued items separately, including future chain steps.
+- Count running/cancelling child items rather than delegation groups in the TUI footer, and show queued items separately, including future chain steps ([#10](https://github.com/mothieras/pi-subagent/pull/10)).
 
 ## [0.1.4] - 2026-10-12
 
@@ -66,7 +68,8 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 - Session-local background tasks, paginated results, cancellation, write-collision checks, retention limits, and snapshot-based child usage accounting.
 - Optional role/workflow examples, Plan Mode companion, and versioned installation/rollback guidance.
 
-[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/mothieras/pi-subagent/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/mothieras/pi-subagent/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/mothieras/pi-subagent/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/mothieras/pi-subagent/compare/v0.1.1...v0.1.2
