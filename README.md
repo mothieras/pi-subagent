@@ -9,14 +9,14 @@ Each child receives its own context and explicitly selected tools. Background wo
 ## Install
 
 ```bash
-pi install npm:@mothieras/pi-subagent@0.1.5
+pi install npm:@mothieras/pi-subagent
 ```
 
 Start a new session, or run `/reload` after the current turn finishes. Enable only one implementation of `subagent` / `subagent_task`.
 
 This installs the tools, workflow prompts, and delegation skill. Example roles and the optional Plan Mode companion require separate setup.
 
-The command pins a reviewed npm release. Omit `@0.1.5` to track the latest npm release, then update with `pi update npm:@mothieras/pi-subagent`. New Git commits do not change the npm release.
+The command installs the latest published npm release. Update with `pi update npm:@mothieras/pi-subagent`. To pin a specific release, use `pi install npm:@mothieras/pi-subagent@<version>`. New Git commits do not change the npm release.
 
 Git/local installation remains supported; see [installation, source migration, and release preparation](INSTALL.md). Unversioned Git installs follow the default branch and may contain unreleased changes. See the [changelog](CHANGELOG.md) for release history. This README describes the current checkout.
 
