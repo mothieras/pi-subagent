@@ -1,6 +1,6 @@
 {
   "name": "@mothieras/pi-subagent",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Isolated task delegation, Markdown roles, and session-local background agents for Pi.",
   "repository": { "type": "git", "url": "git+https://github.com/mothieras/pi-subagent.git" },
   "keywords": ["pi-package", "pi", "subagent"],

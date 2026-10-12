@@ -13,10 +13,10 @@ Only enable one implementation of `subagent` / `subagent_task`. If using Plan Mo
 Install a reviewed npm release:
 
 ```bash
-pi install npm:@mothieras/pi-subagent@0.1.4
+pi install npm:@mothieras/pi-subagent@0.1.5
 ```
 
-Versioned npm specifications stay pinned; choose a new version deliberately when upgrading. To track the latest published npm release, omit `@0.1.4` and update with `pi update npm:@mothieras/pi-subagent`. Git commits alone do not update npm installations.
+Versioned npm specifications stay pinned; choose a new version deliberately when upgrading. To track the latest published npm release, omit `@0.1.5` and update with `pi update npm:@mothieras/pi-subagent`. Git commits alone do not update npm installations.
 
 Alternatively, install from Git:
 
