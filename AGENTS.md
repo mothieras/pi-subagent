@@ -9,7 +9,7 @@ Read the matching reference before changing its contract:
 | Change | Reference |
 | --- | --- |
 | Public parameters, defaults, permissions, task/delivery state, usage, or retention | [docs/API.md](docs/API.md) |
-| Package resources, discovery, entry points, installation, or release layout | [INSTALL.md](INSTALL.md) |
+| Package resources, discovery, entry points, installation, npm packaging, or release layout | [INSTALL.md](INSTALL.md) |
 | Host API integration or pinned Pi development dependencies | Matching Pi documentation and examples; baseline Pi 1.1.0 |
 | Contribution checks, CI, or review process | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Security-sensitive behavior or reporting | [SECURITY.md](SECURITY.md) |
@@ -43,7 +43,7 @@ Preserve these unless the requested change explicitly revises the documented con
 
 1. Inspect the current worktree; preserve unrelated edits and keep the patch focused. Use TypeScript ESM, explicit `.ts` imports and the surrounding tab indentation.
 2. For contract changes, update runtime validation, schemas, types, docs/examples and regression tests together. Keep tool descriptions self-contained and the English delegation skill short and orchestration-focused.
-3. Test under `tests/*.test.ts` with temporary directories, cleanup and local fake providers/MCP servers. Automated tests use no live credentials/models or ambient Pi configuration. Installation/discovery changes must exercise actual Pi package loading and conventional directory symlinks.
+3. Test under `tests/*.test.ts` with temporary directories, cleanup and local fake providers/MCP servers. Automated tests use no live credentials/models or ambient Pi configuration. Installation/discovery changes must exercise actual Pi package loading and conventional directory symlinks. Packaging changes must verify the actual unpacked npm tarball, including child bootstrap and resource discovery.
 4. Install dependencies with `npm ci --ignore-scripts` when needed. Run `npm run check`, `npm test`, and `git diff --check` before committing. Report actual results and manual gaps separately; fake inference does not establish TUI, subscription or platform cleanup behavior.
 5. Update [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for user-visible changes. Review/stage only intended files; exclude local plans, credentials, generated evaluation artifacts and machine-specific installation records. Use conventional commit subjects and focused PRs.
 
@@ -51,6 +51,6 @@ Preserve these unless the requested change explicitly revises the documented con
 
 Public docs/examples use English. Keep README as the entry point, contracts in `docs/API.md`, setup/upgrade/rollback in `INSTALL.md`, and human contribution workflow in `CONTRIBUTING.md`. Validate links/examples and preserve MIT/upstream attribution.
 
-Pi host packages remain peer dependencies with `"*"`; pinned development copies support verification only. Keep runtime independent of installed example directories and bundled role files. The package is public on GitHub but private/not published to npm.
+Pi host packages remain peer dependencies with `"*"`; pinned development copies support verification only. Keep runtime independent of installed example directories and bundled role files. Public npm releases use `@mothieras/pi-subagent`; use [INSTALL.md](INSTALL.md#prepare-an-npm-release-without-publishing) for candidate verification and publication boundaries. Preparation does not establish registry availability.
 
 A release requires a new version/tag, never a moved tag. Keep release worktrees immutable and preserve custom resources plus rollback records during upgrades. Publishing, tags, merging, installation switches, and remote repository settings require explicit authorization; ordinary implementation does not grant it. Commit/push/open a PR only when the user authorizes that workflow.

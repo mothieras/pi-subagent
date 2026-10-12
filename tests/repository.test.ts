@@ -73,15 +73,22 @@ test("issue forms have unique fields, required reproducible input and privacy gu
 	assert.equal((await yaml(".github/ISSUE_TEMPLATE/config.yml")).blank_issues_enabled, true);
 });
 
-test("changelog covers the current release and unreleased work without changing publication policy", async () => {
+test("manifest and lockfile agree while the changelog distinguishes candidates from releases", async () => {
 	const manifest = JSON.parse(await fs.readFile("package.json", "utf8"));
 	const lock = JSON.parse(await fs.readFile("package-lock.json", "utf8"));
+	assert.equal(lock.name, manifest.name);
+	assert.equal(lock.packages[""].name, manifest.name);
 	assert.equal(lock.version, manifest.version);
 	assert.equal(lock.packages[""].version, manifest.version);
 	const changelog = await fs.readFile("CHANGELOG.md", "utf8");
+	const releases = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/gm)];
+	assert.ok(releases.length > 0, "Keep dated release history");
 	assert.ok(changelog.includes("## [Unreleased]"));
-	assert.ok(changelog.includes(`## [${manifest.version}] - `));
-	assert.ok(changelog.indexOf("## [Unreleased]") < changelog.indexOf(`## [${manifest.version}]`));
-	assert.equal(manifest.private, true);
+	assert.ok(changelog.indexOf("## [Unreleased]") < releases[0].index!);
+	if (!releases.some((release) => release[1] === manifest.version)) {
+		const unreleased = changelog.slice(changelog.indexOf("## [Unreleased]"), releases[0].index);
+		assert.ok(unreleased.includes(`\`${manifest.version}\``), "Document the candidate version under Unreleased");
+	}
+	assert.equal(manifest.private, false);
 	assert.ok(Object.values(manifest.peerDependencies).every((range) => range === "*"));
 });

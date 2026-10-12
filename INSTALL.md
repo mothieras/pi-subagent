@@ -4,17 +4,29 @@
 
 - Pi, with child processes able to resolve its model configuration and credentials.
 - See [compatibility and verification](README.md#compatibility-and-verification) for the host baseline, CI targets, and manual-validation limits. Automated checks do not establish every platform or provider/subscription flow.
-- Git for repository-based installs. This package is not currently published to npm.
+- Git for repository-based installs. npm installation uses the public package `@mothieras/pi-subagent`.
 
 Only enable one implementation of `subagent` / `subagent_task`. If using Plan Mode, also keep only one `/plan` extension. Disable an older implementation before enabling this one, and record its previous configuration/link targets.
 
 ## Install as a Pi package
+
+Install a reviewed npm release:
+
+```bash
+pi install npm:@mothieras/pi-subagent@0.1.4
+```
+
+Versioned npm specifications stay pinned; choose a new version deliberately when upgrading. To track the latest published npm release, omit `@0.1.4` and update with `pi update npm:@mothieras/pi-subagent`. Git commits alone do not update npm installations.
+
+Alternatively, install from Git:
 
 ```bash
 pi install git:github.com/mothieras/pi-subagent
 ```
 
 This tracks the default branch. To pin a reviewed tag or commit, append `@<ref>` to the source; Pi keeps versioned Git references pinned.
+
+When moving from Git/local/symlink installation to npm, record and remove or disable the old installation first: different source types may load the same tools twice. The `pi-package` keyword makes the published package eligible for the [Pi package catalog](https://pi.dev/packages); catalog synchronization is separate from publication.
 
 Package resources are:
 
@@ -24,7 +36,7 @@ Package resources are:
 | Workflow prompts | `prompts/` |
 | Delegation skill | `skills/pi-subagent/SKILL.md` |
 
-Role files and the Plan Mode companion are optional and not installed by the package manifest. Prompts using named roles need those roles installed first.
+Role files and the Plan Mode companion are included in the distribution but not automatically loaded by the package manifest. Prompts using named roles need those roles installed first.
 
 Use `pi list` to inspect configured packages and `pi config` to select resources. Do not also symlink the extension into the discovery directory: package and symlink installation are alternatives.
 
@@ -122,7 +134,8 @@ These checks may call a real model and incur usage; the repository's automated t
 
 ## Upgrade
 
-- **Pinned package:** select a new reviewed tag/commit rather than moving an existing tag. Pi recognizes the same repository identity, so inspect the resulting declaration with `pi list`.
+- **Pinned Git package:** select a new reviewed tag/commit rather than moving an existing tag. Pi recognizes the same repository identity, so inspect the resulting declaration with `pi list`.
+- **npm package:** select a new reviewed version with `pi install npm:@mothieras/pi-subagent@<version>`. Unversioned installs can be updated with `pi update npm:@mothieras/pi-subagent`. Inspect the resulting declaration with `pi list`.
 - **Unpinned package:** `pi update git:github.com/mothieras/pi-subagent` reconciles the repository checkout.
 - **Local/fixed release:** prepare and verify the new checkout/worktree, record old link targets, then switch the extension and installed companion/roles/prompts/skill together. Record newly added resources separately.
 
@@ -133,3 +146,23 @@ Preserve existing custom roles, prompts, and skills. Reload or start a new sessi
 Restore the previous package declaration or recorded link targets. Remove only resources added by the failed installation that still point to that installation; retain files customized since then. Reload or start a new session.
 
 Rollback/cancellation does not undo code changes, external actions, or model usage. Results and running tasks do not survive reload; save important findings first.
+
+## Prepare an npm release without publishing
+
+Read `package.json` for the package name and candidate version. Releases target `@mothieras/pi-subagent`, with public access and the official npm registry. A manifest version is not evidence of npm availability. Before publishing each new version, confirm scope permissions and that the name/version has not already been published.
+
+Run from the repository root:
+
+```bash
+npm ci --ignore-scripts
+npm run check
+npm test
+git diff --check
+npm pack --dry-run --ignore-scripts
+```
+
+`npm test` packs to a temporary directory, checks the distribution contents, loads the unpacked resources through Pi, and runs parent/child delegation through the pinned host's declared `bin.pi` executable against a local fake provider. The tarball fixture isolates shared resource discovery and proxy settings; a loopback proxy trap verifies that inference does not use ambient proxies. It neither publishes nor modifies an active Pi installation. The tarball/CLI checks run on the Linux/macOS CI baseline; Windows remains unverified. The dry run lists the files that would ship without writing a tarball to the checkout.
+
+The `files` allowlist includes every runtime TypeScript module (especially the private `child.ts` bootstrap), optional roles/Plan Mode, prompts, skills, and public documentation. Development dependencies, tests, CI files, local plans, and machine-specific records are not distribution resources. Pi host packages remain `"*"` peers supplied by Pi; do not bundle them or require a TypeScript build.
+
+Publication is a separate authorized action. After approval, finalize the dated changelog entry, recheck the name/version and verification results, and create a new immutable release tag. Publish the reviewed artifact to npm with public access only when explicitly authorized; preparation, a green test run, and catalog eligibility do not grant that authorization. Confirm registry availability and catalog discovery afterward; neither immediate indexing nor a synchronization interval is guaranteed. Keep the installation documentation aligned with the reviewed release. See [Contributing](CONTRIBUTING.md#releases) for the maintainer workflow.

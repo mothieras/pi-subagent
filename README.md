@@ -9,14 +9,16 @@ Each child receives its own context and explicitly selected tools. Background wo
 ## Install
 
 ```bash
-pi install git:github.com/mothieras/pi-subagent
+pi install npm:@mothieras/pi-subagent@0.1.4
 ```
 
 Start a new session, or run `/reload` after the current turn finishes. Enable only one implementation of `subagent` / `subagent_task`.
 
-This installs the tools, workflow prompts, and delegation skill. Example roles and the optional Plan Mode companion require separate setup. The package is not published to npm.
+This installs the tools, workflow prompts, and delegation skill. Example roles and the optional Plan Mode companion require separate setup.
 
-The command follows the default branch, which may contain unreleased changes. For daily use, [pin a reviewed tag or commit](INSTALL.md#install-as-a-pi-package); see the [changelog](CHANGELOG.md) for released and unreleased changes. This README describes the current checkout.
+The command pins a reviewed npm release. Omit `@0.1.4` to track the latest npm release, then update with `pi update npm:@mothieras/pi-subagent`. New Git commits do not change the npm release.
+
+Git/local installation remains supported; see [installation, source migration, and release preparation](INSTALL.md). Unversioned Git installs follow the default branch and may contain unreleased changes. See the [changelog](CHANGELOG.md) for release history. This README describes the current checkout.
 
 ## Start with a read-only task
 

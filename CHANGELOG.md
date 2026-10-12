@@ -1,11 +1,19 @@
 # Changelog
 
-User-visible changes are recorded here. `Unreleased` describes changes in the current development branch, not an already-published version. The v0.1.0–v0.1.2 entries were reconstructed from immutable Git tags and commit history.
+User-visible changes are recorded here. `Unreleased` describes changes in the current development branch, not an already-published version. The manifest may target an unreleased candidate; only dated entries describe releases. The v0.1.0–v0.1.2 entries were reconstructed from immutable Git tags and commit history.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-12
+
+### Added
+
+- npm distribution verification using an actual tarball, unpacked Pi package/resource discovery, conventional directory symlinks, and the shipped Pi parent/child CLI against a loopback fake provider, with shared-resource/proxy isolation and a hostile-proxy regression.
+
 ### Changed
 
+- Introduce public npm distribution as `@mothieras/pi-subagent`, with an explicit file allowlist and public registry/access configuration.
+- Document npm installation and updates, source migration, release preparation, and the separate authorization required for publication.
 - Upgrade and pin the development TypeScript compiler from 5.9.3 to 7.0.2, keeping the Node.js 24 and Pi 1.1.0 baselines unchanged.
 - Update the development YAML parser from 2.9.0 to 2.9.1 without changing the pinned Pi host dependencies.
 
@@ -54,7 +62,8 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 - Session-local background tasks, paginated results, cancellation, write-collision checks, retention limits, and snapshot-based child usage accounting.
 - Optional role/workflow examples, Plan Mode companion, and versioned installation/rollback guidance.
 
-[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/mothieras/pi-subagent/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/mothieras/pi-subagent/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/mothieras/pi-subagent/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mothieras/pi-subagent/compare/v0.1.0...v0.1.1

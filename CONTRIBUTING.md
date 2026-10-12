@@ -25,7 +25,7 @@ git diff --check
 
 Read [AGENTS.md](AGENTS.md) for module boundaries and invariants. Edit the checkout, not Pi's installed examples or your daily installation. For installation changes, use [INSTALL.md](INSTALL.md) and an isolated configuration/worktree.
 
-Tests belong in `tests/*.test.ts` and must clean up temporary data and child processes. Use loopback fake providers/MCP servers, not real credentials, remote models, or the user's Pi resources. Dependency installation needs registry access; inference tests do not need a subscription. `npm test` also checks documentation links/examples and repository configuration.
+Tests belong in `tests/*.test.ts` and must clean up temporary data and child processes. Use loopback fake providers/MCP servers, not real credentials, remote models, or the user's Pi resources. Dependency installation needs registry access; inference tests do not need a subscription. `npm test` also checks documentation links/examples, repository configuration, and the actual npm tarball with unpacked Pi package discovery and offline parent/child delegation.
 
 A live-provider or GUI smoke test is optional and separate: confirm the model, budget, permissions, and isolation first, then report its limited scope. Never treat a fake-provider test as evidence of subscription compatibility or complete platform cleanup.
 
@@ -41,18 +41,20 @@ The maintainer reviews scope, compatibility, tests, and security implications be
 
 ## CI and dependency maintenance
 
-[CI](.github/workflows/ci.yml) runs on pull requests (including base-branch edits), pushes to `master`, and manual dispatch. Node.js 24 jobs on Linux/macOS install locked dependencies without lifecycle scripts, type-check, run offline tests, check whitespace, and verify that the checkout stays clean. Jobs use a read-only token and no provider secrets. Actions are pinned to full commit SHAs.
+[CI](https://github.com/mothieras/pi-subagent/blob/master/.github/workflows/ci.yml) runs on pull requests (including base-branch edits), pushes to `master`, and manual dispatch. Node.js 24 jobs on Linux/macOS install locked dependencies without lifecycle scripts, type-check, run offline tests, check whitespace, and verify that the checkout stays clean. Jobs use a read-only token and no provider secrets. Actions are pinned to full commit SHAs.
 
 Windows is not in the matrix. Read the individual run and skipped cases before claiming platform support. Interactive TUI and real-provider behavior still need scoped manual validation.
 
-[Dependabot](.github/dependabot.yml) proposes weekly npm and Actions updates. Pi host development packages are grouped because their APIs must move together. Review host updates against matching Pi docs/examples and update the stated baseline when warranted; dependency PRs do not merge automatically.
+[Dependabot](https://github.com/mothieras/pi-subagent/blob/master/.github/dependabot.yml) proposes weekly npm and Actions updates. Pi host development packages are grouped because their APIs must move together. Review host updates against matching Pi docs/examples and update the stated baseline when warranted; dependency PRs do not merge automatically.
 
 Branch protection and required status checks are repository settings, not enforced by the workflow itself. Configure them deliberately after the workflow is merged and its check names are established.
 
 ## Releases
 
-This package is available through Git/local Pi installation, not npm. A maintenance PR does not itself release a version.
+Distribution supports the public npm package `@mothieras/pi-subagent` and Git/local Pi installation. A maintenance PR or release-preparation patch does not itself release a version.
 
-When preparing a release, reconcile `package.json` and the lockfile version, move `Unreleased` notes into a dated changelog section, rerun checks, and request authorization for the new immutable tag/publication. Use [INSTALL.md](INSTALL.md) for upgrade/rollback procedures and preserve custom resources. Never move a published tag or silently switch an active installation.
+During preparation, reconcile the manifest/lockfile name and candidate version, keep changes under `Unreleased`, and follow [the npm preparation checklist](INSTALL.md#prepare-an-npm-release-without-publishing). Verify the unpacked tarball, including runtime modules, optional resources, and documentation; keep host packages as `"*"` peers. Confirm npm scope ownership and publication permissions separately.
+
+After explicit release authorization, move `Unreleased` notes into a dated version section, rerun checks, and create a new immutable tag/publication. The manifest's candidate version is not proof of a released tag or npm artifact. Use [INSTALL.md](INSTALL.md) for upgrade/rollback procedures and preserve custom resources. Never move a published tag or silently switch an active installation.
 
 Contributions are distributed under the repository's [MIT license](LICENSE). Keep upstream attribution intact.
