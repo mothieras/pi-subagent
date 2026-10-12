@@ -44,9 +44,12 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	const plan = () => context ? isPlanMode(context, pi.getFlag("plan") === true) : false;
 	function updateStatus(): void {
 		if (!manager || !context) return;
-		const active = manager.list().filter((job) => ["queued", "running", "cancelling"].includes(job.state)).length;
-		if (context.mode === "tui") context.ui.setStatus("subagent", active ? `subagents: ${active} active · ${formatUsage(manager.usage())}` : `subagents: ${formatUsage(manager.usage()) || "0 turns"}`);
-		if (!active && !manager.pendingNotifications().length && watch) { clearInterval(watch); watch = undefined; }
+		const { active, queued } = manager.activity();
+		const activity = active || queued ? [`${active} active`, queued ? `${queued} queued` : ""] : [];
+		if (context.mode === "tui") context.ui.setStatus("subagent", `subagents: ${[...activity, formatUsage(manager.usage())].filter(Boolean).join(" · ") || "0 turns"}`);
+		// Keep watching groups through queueing and final cleanup, even if no item is running.
+		const activeGroups = manager.list().some((job) => ["queued", "running", "cancelling"].includes(job.state));
+		if (!activeGroups && !manager.pendingNotifications().length && watch) { clearInterval(watch); watch = undefined; }
 	}
 	function deliverPending(): void {
 		if (!context?.isIdle()) return;

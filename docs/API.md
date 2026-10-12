@@ -196,6 +196,8 @@ Shell tools, unknown custom tools, and MCP loadouts are treated as potentially w
 
 The extension ledger is authoritative for reported child calls. **Pi's native `/session` and footer do not include this extension's child usage.** `list` reports session totals; status/rendering expose group/item totals. Queries, progress, and notifications do not charge usage again.
 
+The TUI extension footer counts child items, not `subagent` calls/task groups. `active` includes running and cancelling items; `queued` is shown separately and includes items waiting for a process slot and future chain steps. Completed, failed, cancelled, and skipped items no longer contribute to either count.
+
 Usage includes reported model, tool-embedded model, and compaction usage. Reasoning/cache-write subsets are not double-counted. Failed/cancelled tasks retain known usage. Hard kills/protocol failures can leave server usage unreported: `usageComplete: false` means the total is incomplete, not free. Absolute ledger snapshots persist on completion/normal shutdown; reload/resume restores accounting only.
 
 Artifacts live under a system temporary `pi-subagent-session-*` directory (0700; files 0600):

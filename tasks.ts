@@ -88,6 +88,18 @@ export class SessionTasks {
 		this.slots = new Slots(Math.max(1, options.concurrency ?? 4));
 	}
 	usage(): UsageStats { return aggregateUsage([this.baseline, this.retired, ...[...this.jobs.values()].flatMap((job) => job.results.map((result) => result.usage))]); }
+	/** Child-item activity, not group count; future chain steps remain queued. */
+	activity(): { active: number; queued: number } {
+		let active = 0; let queued = 0;
+		for (const job of this.jobs.values()) {
+			if (terminal(job.state)) continue;
+			for (const result of job.results) {
+				if (result.state === "running" || result.state === "cancelling") active++;
+				else if (result.state === "queued") queued++;
+			}
+		}
+		return { active, queued };
+	}
 	private snapshot(job: Job): SubagentDetails {
 		return structuredClone({ mode: job.run.mode, agentScope: job.run.agentScope, projectAgentsDir: job.run.projectAgentsDir,
 			results: job.results, taskId: job.id, state: job.state, resultDelivered: job.resultDelivered, expired: job.expired,
