@@ -6,6 +6,7 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ### Added
 
+- Lightweight child activity snapshots (`startedAt`, `finishedAt`, `elapsedMs`, `currentTool`, `lastEventAt`) in task results and management queries, with queue-free runtime and terminal cleanup. The TUI adds a read-only live `/subagents` inspection view, a footer entry point, and activity in tool-result rendering; inspection never starts a model turn or changes result delivery/accounting.
 - Optional per-child `config.timeoutMs` runtime deadlines with item/call/role/user-default precedence and explicit `0` to disable an inherited limit. Queueing is excluded; timed-out children fail after cancellation cleanup, retain output and reported usage, skip later chain steps, and leave parallel siblings running.
 
 ### Changed

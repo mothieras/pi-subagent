@@ -66,7 +66,34 @@ export function emptyUsage(): UsageStats {
 		cost: 0, costBreakdown: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextTokens: 0, turns: 0 };
 }
 export type TaskState = "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | "skipped";
-export interface SingleResult {
+/** Parent-observed activity. A recent event is not proof of child health. */
+export interface TaskActivity {
+	startedAt?: number;
+	finishedAt?: number;
+	elapsedMs?: number;
+	currentTool?: string;
+	lastEventAt?: number;
+}
+export interface TaskItemSummary extends TaskActivity {
+	itemId?: string;
+	agent: string;
+	state?: TaskState;
+	step?: number;
+}
+export interface TaskSummary {
+	taskId: string;
+	state: TaskState;
+	mode: ResolvedRun["mode"];
+	/** Group admission time; child runtime starts at each item's startedAt. */
+	startedAt: number;
+	finishedAt?: number;
+	expired: boolean;
+	resultDelivered: boolean;
+	progress: { total: number; done: number };
+	usage: UsageStats;
+	results: TaskItemSummary[];
+}
+export interface SingleResult extends TaskActivity {
 	agent: string;
 	agentSource: "user" | "project" | "inline" | "unknown";
 	task: string;

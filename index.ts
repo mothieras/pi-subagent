@@ -7,7 +7,7 @@ import { resolveRun } from "./config.ts";
 import { emptyUsage, type ChildConfig, type CompletionNotice, type RunChild, type RunRequest, type SubagentDetails, type UsageStats } from "./contracts.ts";
 import { createProcessRunner, normalizeUsage } from "./process-runner.ts";
 import { enforcePlanMode, isPlanMode } from "./policy.ts";
-import { renderCall, renderResult, formatUsage } from "./render.ts";
+import { ActivityView, renderCall, renderResult, formatUsage } from "./render.ts";
 import { SubagentParams, TaskManagementParams } from "./schemas.ts";
 import { canonicalExtension, readUserConfig, selectMcpServers } from "./sources.ts";
 import { SessionTasks, resultFailed, resultOutput } from "./tasks.ts";
@@ -39,6 +39,8 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	let context: ExtensionContext | undefined;
 	let generation = 0;
 	let watch: ReturnType<typeof setInterval> | undefined;
+	let inspector: ActivityView | undefined;
+	let statusText: string | undefined;
 	const approvedExtensions = new Set<string>();
 	const approvedRoles = new Set<string>();
 	const plan = () => context ? isPlanMode(context, pi.getFlag("plan") === true) : false;
@@ -46,7 +48,11 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 		if (!manager || !context) return;
 		const { active, queued } = manager.activity();
 		const activity = active || queued ? [`${active} active`, queued ? `${queued} queued` : ""] : [];
-		if (context.mode === "tui") context.ui.setStatus("subagent", `subagents: ${[...activity, formatUsage(manager.usage())].filter(Boolean).join(" · ") || "0 turns"}`);
+		if (context.mode === "tui") {
+			const text = `subagents: ${[...activity, formatUsage(manager.usage()), active || queued ? "/subagents" : ""].filter(Boolean).join(" · ") || "0 turns"}`;
+			if (text !== statusText) { context.ui.setStatus("subagent", text); statusText = text; }
+		}
+		inspector?.refresh();
 		// Keep watching groups through queueing and final cleanup, even if no item is running.
 		const activeGroups = manager.list().some((job) => ["queued", "running", "cancelling"].includes(job.state));
 		if (!activeGroups && !manager.pendingNotifications().length && watch) { clearInterval(watch); watch = undefined; }
@@ -106,11 +112,30 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 		if (notices.length) return { entries: [...event.entries, { type: "custom_message", ...completionMessage(notices) }], continue: true };
 	});
 	pi.on("agent_settled", (_event, ctx) => { context = ctx; manager?.clearDeliveryAttempts(); updateStatus(); });
-	pi.on("session_before_tree", async () => { await manager?.cancelAll(true); updateStatus(); });
+	pi.on("session_before_tree", async () => { inspector?.close(); await manager?.cancelAll(true); updateStatus(); });
 	pi.on("session_shutdown", async () => {
+		inspector?.close(); inspector = undefined;
 		if (watch) { clearInterval(watch); watch = undefined; }
 		await manager?.shutdown();
-		generation++; manager = undefined; context = undefined; approvedExtensions.clear(); approvedRoles.clear();
+		if (context?.mode === "tui") context.ui.setStatus("subagent", undefined);
+		generation++; manager = undefined; context = undefined; statusText = undefined; approvedExtensions.clear(); approvedRoles.clear();
+	});
+	pi.registerCommand("subagents", {
+		description: "Inspect session-local subagent activity without a model call",
+		async handler(_args, ctx) {
+			if (ctx.mode !== "tui") { ctx.ui.notify("/subagents requires the TUI. Use subagent_task list/status in other modes.", "info"); return; }
+			const tasks = ensureManager(ctx);
+			inspector?.close();
+			let view: ActivityView | undefined;
+			try {
+				await ctx.ui.custom<void>((tui, theme, keys, done) => {
+					view = new ActivityView(() => ({ tasks: tasks.list(), usage: tasks.usage() }), theme, keys,
+						() => Math.floor(tui.terminal.rows * 0.9), () => tui.requestRender(), () => done());
+					inspector = view;
+					return view;
+				}, { overlay: true, overlayOptions: { width: "95%", maxHeight: "90%" } });
+			} finally { if (inspector === view) inspector = undefined; }
+		},
 	});
 	pi.registerMessageRenderer("subagent-complete", (message, _options, theme) => new Text(theme.fg("accent", typeof message.content === "string" ? message.content : "Background subagent completed"), 0, 0));
 	pi.registerTool({
@@ -174,6 +199,8 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 				const data = { taskId: details.taskId, state: details.state, mode: details.mode, usage: details.usage, resultDelivered: details.resultDelivered, expired: details.expired,
 					results: details.results.map((result) => ({ itemId: result.itemId, agent: result.agent, state: result.state, model: result.model,
 						thinking: result.thinking, timeoutMs: result.resolved?.timeoutMs, timedOut: result.timedOut, exitCode: result.exitCode,
+						startedAt: result.startedAt, finishedAt: result.finishedAt, elapsedMs: result.elapsedMs,
+						currentTool: result.currentTool, lastEventAt: result.lastEventAt,
 						tools: result.resolved?.tools, roleFile: result.resolved?.agentFile,
 						shadowedFiles: result.resolved?.shadowedFiles, provenance: result.resolved?.provenance,
 						usage: result.usage, usageComplete: result.usageComplete, errorMessage: result.errorMessage })) };

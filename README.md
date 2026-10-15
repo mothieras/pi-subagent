@@ -77,6 +77,12 @@ Follow the returned `nextCursor` until it is `null`. Complete final output deliv
 
 Background tasks and retained results do not survive exit, session switch, or reload. Save important findings first. Child usage appears in `subagent_task` list/status, not Pi's native `/session` totals.
 
+## Inspect activity without a model call
+
+In the TUI, run **`/subagents`** to inspect live child activity and retained completions. It shows item state, actual start time, runtime, current tool, last-event age, and extension usage. Use arrow/Page Up/Page Down keys to scroll and Escape to close (configured selection keys are respected). The footer includes this entry point while work is active or queued.
+
+The view is read-only: no model turn, report/log read, usage charge, or result-delivery acknowledgment. A recent event is not proof that a process is healthy. In RPC/JSON/print modes, use `subagent_task` list/status; those responses also expose [item activity fields](docs/API.md#activity-inspection).
+
 ## Safety boundaries
 
 **Isolation is not an OS sandbox.** Tools and executable sources retain host permissions; `cwd` does not restrict filesystem access.

@@ -107,6 +107,7 @@ test("actual npm tarball contains runtime imports, optional resources and linked
 	assert.deepEqual(loaded.extensions.map((extension) => extension.path), [path.join(f.packageRoot, "index.ts")]);
 	assert.deepEqual(loaded.extensions.flatMap((extension) => [...extension.tools.keys()]).sort(), ["subagent", "subagent_task"]);
 	assert.ok(!loaded.extensions.some((extension) => extension.commands.has("plan")), "Plan Mode stays opt-in");
+	assert.equal(loaded.extensions.flatMap((extension) => [...extension.commands.keys()]).filter((name) => name === "subagents").length, 1);
 	assert.deepEqual(loader.getSkills().diagnostics, []);
 	assert.deepEqual(loader.getSkills().skills.map((skill) => skill.name), ["pi-subagent"]);
 	assert.deepEqual(loader.getPrompts().diagnostics, []);
@@ -120,6 +121,7 @@ test("actual npm tarball contains runtime imports, optional resources and linked
 	assert.deepEqual(linked.errors, []);
 	assert.deepEqual(linked.extensions.flatMap((extension) => [...extension.tools.keys()]).sort(), ["subagent", "subagent_task"]);
 	assert.equal(linked.extensions.flatMap((extension) => [...extension.commands.keys()]).filter((name) => name === "plan").length, 1);
+	assert.equal(linked.extensions.flatMap((extension) => [...extension.commands.keys()]).filter((name) => name === "subagents").length, 1);
 });
 
 test("unpacked package runs the shipped parent/child Pi CLI against a loopback fake provider despite hostile proxy defaults", { skip: posixOnly, timeout: 20000 }, async (t) => {

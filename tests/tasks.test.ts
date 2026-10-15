@@ -97,6 +97,9 @@ test("queued cancellation never launches remaining children and releases queue l
 	while (!launched) await delay(1);
 	await manager.cancel(started.taskId);
 	assert.equal(launched, 1); assert.ok(manager.status(started.taskId).results.every((r) => r.state === "cancelled"));
+	const items = manager.status(started.taskId).results;
+	assert.equal(typeof items[0].elapsedMs, "number"); assert.equal(items[0].currentTool, undefined);
+	assert.ok(items.slice(1).every((item) => item.startedAt === undefined && item.elapsedMs === undefined));
 });
 test("activity counts queued and cancelling child items without charging usage", async (t) => {
 	let ready: () => void = () => {}; let launched = 0;
@@ -123,6 +126,70 @@ test("activity counts queued and cancelling child items without charging usage",
 	assert.equal(launched, 1);
 	assert.deepEqual(manager.activity(), { active: 0, queued: 0 });
 	assert.equal(manager.usage().input, 10);
+});
+test("item activity excludes queueing, freezes on completion and is a pure detached snapshot", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now: 1000 });
+	const held = new Map<string, { finish: () => void; update: (value: SingleResult) => void }>();
+	const { manager } = await fixture(t, { concurrency: 1, runner: async (input, _files, signal, update) => {
+		await new Promise<void>((resolve) => {
+			const finish = () => { signal.removeEventListener("abort", finish); resolve(); };
+			held.set(input.task, { finish, update });
+			if (signal.aborted) finish(); else signal.addEventListener("abort", finish, { once: true });
+		});
+		return result(input);
+	} });
+	const started = await manager.start(run({ mode: "parallel", background: true, tasks: [task({ task: "first" }), task({ task: "second" })] }));
+	while (!held.has("first")) await delay(1);
+	let items = manager.status(started.taskId).results;
+	assert.equal(items[0].startedAt, 1000); assert.equal(items[0].elapsedMs, 0);
+	assert.equal(items[1].startedAt, undefined); assert.equal(items[1].elapsedMs, undefined);
+	t.mock.timers.setTime(4000);
+	held.get("first")!.update({ ...result(task()), startedAt: 9, finishedAt: 10, currentTool: "read", lastEventAt: 4000 });
+	items = manager.status(started.taskId).results;
+	assert.equal(items[0].startedAt, 1000); assert.equal(items[0].finishedAt, undefined); assert.equal(items[0].elapsedMs, 3000);
+	assert.equal(items[0].currentTool, "read"); assert.equal(items[0].lastEventAt, 4000);
+	const before = manager.usage();
+	for (let i = 0; i < 10; i++) {
+		const summary = manager.list()[0];
+		assert.equal(summary.results[0].elapsedMs, 3000); assert.equal(summary.results[1].elapsedMs, undefined);
+		summary.results[0].currentTool = "mutated";
+	}
+	assert.equal(manager.status(started.taskId).results[0].currentTool, "read");
+	assert.deepEqual(manager.usage(), before);
+	t.mock.timers.setTime(5000); held.get("first")!.finish();
+	while (!held.has("second")) await delay(1);
+	items = manager.status(started.taskId).results;
+	assert.equal(items[0].finishedAt, 5000); assert.equal(items[0].elapsedMs, 4000); assert.equal(items[0].currentTool, undefined);
+	assert.equal(items[1].startedAt, 5000); assert.equal(items[1].elapsedMs, 0);
+	t.mock.timers.setTime(7000); held.get("second")!.finish();
+	const final = await started.done;
+	t.mock.timers.setTime(9000);
+	assert.deepEqual(manager.list()[0].results.map((item) => item.elapsedMs), [4000, 2000]);
+	assert.deepEqual(final.results.map((item) => item.elapsedMs), [4000, 2000]);
+	assert.equal(manager.status(started.taskId).resultDelivered, false); assert.equal(manager.pendingNotifications().length, 1);
+});
+test("cancellation in the pre-launch update never starts a runner or runtime", async (t) => {
+	const caller = new AbortController(); let launched = false;
+	const { manager } = await fixture(t, { runner: async (input) => { launched = true; return result(input); } });
+	const started = await manager.start(run(), caller.signal, (details) => {
+		if (details.results[0].state === "running") caller.abort();
+	});
+	const final = await started.done;
+	assert.equal(launched, false); assert.equal(final.state, "cancelled");
+	assert.equal(final.results[0].startedAt, undefined); assert.equal(final.results[0].elapsedMs, undefined);
+});
+test("failed runner clears tool activity and unexecuted chain steps never acquire runtime", async (t) => {
+	const { manager } = await fixture(t, { runner: async (input, _files, _signal, update) => {
+		update({ ...result(input), currentTool: "read", lastEventAt: Date.now() });
+		throw new Error("runner failed while a tool was active");
+	} });
+	const started = await manager.start(run({ mode: "chain", tasks: [task(), task()] }));
+	const final = await started.done;
+	assert.equal(final.results[0].state, "failed"); assert.equal(final.results[0].currentTool, undefined);
+	assert.equal(typeof final.results[0].lastEventAt, "number"); assert.equal(typeof final.results[0].elapsedMs, "number");
+	assert.ok(final.results[0].finishedAt! >= final.results[0].startedAt!);
+	assert.equal(final.results[1].state, "skipped");
+	assert.equal(final.results[1].startedAt, undefined); assert.equal(final.results[1].finishedAt, undefined); assert.equal(final.results[1].elapsedMs, undefined);
 });
 test("parallel writable loadouts require explicit shared-worktree consent; chains and separate trees are allowed", async (t) => {
 	const { manager } = await fixture(t);
