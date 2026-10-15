@@ -7,6 +7,7 @@ import { test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { emptyUsage, type ResolvedTask, type RunnerFiles, type SingleResult, type UsageStats } from "../contracts.ts";
 import { aggregateUsage, createProcessRunner, getFinalOutput, getPiInvocation, type ProcessRunnerOptions } from "../process-runner.ts";
+import { SessionTasks } from "../tasks.ts";
 
 const fakeScript = String.raw`
 import * as fs from 'node:fs';
@@ -389,6 +390,28 @@ test("graceful cancellation uses shutdown summary instead of adding pending usag
 	assert.deepEqual(result.usage, total.usage);
 	assert.equal(result.usageComplete, true);
 	assert.equal(getEventListeners(f.controller.signal, "abort").length, 0);
+});
+
+for (const mode of ["hang", "graceful"]) test(`runtime deadline cleans up a real ${mode === "hang" ? "SIGTERM-ignoring" : "graceful"} child and preserves accounting`, { timeout: 8000 }, async (t) => {
+	let manager: SessionTasks | undefined;
+	t.after(async () => { await manager?.shutdown(); });
+	const f = fixture(t, { timeoutMs: 2000 });
+	const total = summary({ input: 123, output: 45, totalTokens: 168, turns: 2 });
+	manager = new SessionTasks({
+		tmpRoot: f.dir, workspace: async (cwd) => cwd,
+		runner: createProcessRunner({ killGraceMs: 100, invocation: (args) => ({ command: process.execPath, args: [f.script, mode,
+			JSON.stringify({ pidPath: f.pidPath, records: [end(assistant("checkpoint"))], summary: total }), ...args] }) }),
+	});
+	const started = await manager.start({ mode: "single", agentScope: "user", projectAgentsDir: null, tasks: [f.task], background: false, notify: true, allowSharedWrites: false });
+	const final = await started.done;
+	assert.equal(final.state, "failed");
+	assert.equal(final.results[0].timedOut, true);
+	assert.match(final.results[0].errorMessage!, /timed out after 2000 ms/);
+	assert.equal(final.results[0].output, "checkpoint");
+	assert.equal(final.results[0].usageComplete, mode === "graceful");
+	assert.equal(manager.usage().input, mode === "graceful" ? 123 : 10);
+	assert.match((await manager.read(started.taskId)).text, /checkpoint[\s\S]*timed out/);
+	assert.ok(await gone(Number(fs.readFileSync(f.pidPath, "utf8"))));
 });
 
 test("authoritative aborted message does not duplicate previous streaming usage", async (t) => {

@@ -71,8 +71,23 @@ async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean
 		return answer;
 	};
 	const complete = (task: string, failed = false) => { const release = releases.get(task); assert.ok(release, `No held child: ${task}`); release(failed); };
-	return { pi, ctx, root, entries, notifications, configs, statuses, commands, handlers, call, emit, complete, held: () => releases.size, launched: () => launched };
+	return { pi, ctx, root, entries, notifications, configs, statuses, tools, commands, handlers, call, emit, complete, held: () => releases.size, launched: () => launched };
 }
+test("tool summaries stay compact and preserve call essentials without loading the skill", async (t) => {
+	const f = await fixture(t);
+	const delegate = f.tools.get("subagent"); const management = f.tools.get("subagent_task");
+	assert.ok(delegate.description.length <= 450, "Keep orchestration detail in the on-demand skill");
+	assert.ok(management.description.length <= 300, "Keep result-retrieval detail in the on-demand skill");
+	for (const boundary of ["task", "parallel", "chain", "previous", "parent", "write", "read,grep,find,ls", "extensions:[]", "mcp:[]", "allowSharedWrites", "recursive", "sandbox", "pi-subagent"]) {
+		assert.ok(delegate.description.includes(boundary), `Keep ${boundary} visible without the skill`);
+	}
+	for (const essential of ["taskId", "nextCursor", "complete final-output delivery", "session-local", "/session", "pi-subagent"]) {
+		assert.ok(management.description.includes(essential), `Keep ${essential} visible without the skill`);
+	}
+	const deadline = delegate.parameters.properties.config.properties.timeoutMs.description;
+	assert.ok(deadline.length <= 140, "Describe the field once; put deadline workflow guidance in the skill");
+	assert.match(deadline, /queueing/); assert.match(deadline, /0 disables/);
+});
 test("extension exposes arbitrary inline overrides, foreground output and its own ledger (no native charge)", async (t) => {
 	const f = await fixture(t);
 	const answer = await f.call("subagent", { task: "first", config: { thinking: "low", rolePrompt: { replace: "review", append: "extra" }, tools: { allow: ["read"] } } });
@@ -161,6 +176,31 @@ test("background paths return IDs, detach caller and notify once at parent settl
 	assert.equal(f.notifications.length, 1);
 	await f.emit("agent_before_settle"); assert.equal(f.notifications.length, 1);
 	assert.ok(!f.notifications[0].message.content.includes("Task: background"));
+});
+for (const background of [false, true]) test(`${background ? "background" : "foreground"} timeout exposes structured status and cancel diagnostics`, async (t) => {
+	const f = await fixture(t, { hold: true });
+	const answer = await f.call("subagent", { task: "bounded", background, config: { timeoutMs: 100, tools: { allow: ["read"] } } });
+	const taskId = answer.details.taskId;
+	if (!background) {
+		assert.equal(answer.isError, true);
+		assert.equal(answer.details.results[0].timedOut, true);
+		assert.match(answer.content[0].text, /timed out after 100 ms/);
+	}
+	await waitFor(async () => (await f.call("subagent_task", { action: "status", taskId })).details.state === "failed");
+	for (const action of ["status", "cancel"]) {
+		const response = await f.call("subagent_task", { action, taskId });
+		for (const data of [response.details, JSON.parse(response.content[0].text)]) {
+			assert.equal(data.state, "failed");
+			assert.equal(data.results[0].timedOut, true);
+			assert.equal(data.results[0].timeoutMs, 100);
+			assert.equal(data.results[0].exitCode, 1);
+			assert.match(data.results[0].errorMessage, /timed out after 100 ms/);
+			assert.equal(data.usage.input, 10);
+		}
+	}
+	assert.equal(f.configs[0].task.timeoutMs, 100);
+	await f.emit("agent_before_settle"); await f.emit("agent_before_settle");
+	assert.equal(f.notifications.length, background ? 1 : 0);
 });
 test("complete parallel and chain results consume pending reminders without changing usage", async (t) => {
 	const f = await fixture(t);

@@ -37,7 +37,7 @@ export interface AgentDiscoveryResult {
 	diagnostics: AgentDiagnostic[];
 }
 
-const FRONTMATTER_KEYS = ["name", "description", "model", "thinking", "systemPrompt", "rolePrompt", "tools"];
+const FRONTMATTER_KEYS = ["name", "description", "model", "thinking", "timeoutMs", "systemPrompt", "rolePrompt", "tools"];
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -77,7 +77,7 @@ function parseAgent(content: string, source: "user" | "project", filePath: strin
 	}
 	if (typeof frontmatter.description !== "string") throw new Error("description: expected a string");
 	const config: RunConfig = {};
-	for (const key of ["model", "thinking", "systemPrompt", "rolePrompt", "tools"] as const) {
+	for (const key of ["model", "thinking", "timeoutMs", "systemPrompt", "rolePrompt", "tools"] as const) {
 		if (!Object.prototype.hasOwnProperty.call(frontmatter, key)) continue;
 		Object.assign(config, { [key]: key === "tools" ? parseTools(frontmatter[key]) : frontmatter[key] });
 	}

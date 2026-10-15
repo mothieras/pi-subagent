@@ -211,6 +211,11 @@ export class SessionTasks {
 	}
 	private async item(job: Job, index: number, previous = ""): Promise<void> {
 		const placeholder = job.results[index];
+		const controller = new AbortController();
+		const abort = () => controller.abort();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let timedOut = false;
+		const timeoutDetails = () => timedOut ? { timedOut: true, errorMessage: `Subagent timed out after ${job.run.tasks[index].timeoutMs} ms` } : {};
 		let release: (() => void) | undefined;
 		try {
 			release = await this.slots.acquire(job.controller.signal);
@@ -224,15 +229,28 @@ export class SessionTasks {
 			await fs.writeFile(job.files[index].configPath, JSON.stringify(config), { mode: 0o600 });
 			this.publish(job);
 			if (job.controller.signal.aborted) throw new Error("Cancelled before child launch");
-			const result = await this.options.runner(task, job.files[index], job.controller.signal, (result) => {
-				job.results[index] = { ...result, itemId: placeholder.itemId, step: placeholder.step, state: job.controller.signal.aborted ? "cancelling" : "running" };
+			job.controller.signal.addEventListener("abort", abort, { once: true });
+			if (task.timeoutMs) timer = setTimeout(() => {
+				if (controller.signal.aborted) return; // Explicit cancellation won the race.
+				timedOut = true;
+				job.results[index] = { ...job.results[index], ...timeoutDetails(), state: "cancelling" };
+				controller.abort();
+				this.publish(job);
+			}, task.timeoutMs);
+			const result = await this.options.runner(task, job.files[index], controller.signal, (result) => {
+				job.results[index] = { ...result, ...timeoutDetails(), itemId: placeholder.itemId, step: placeholder.step, state: controller.signal.aborted ? "cancelling" : "running" };
 				this.publish(job);
 			});
 			job.results[index] = { ...result, itemId: placeholder.itemId, step: placeholder.step,
 				state: job.controller.signal.aborted ? "cancelled" : result.state ?? (resultFailed(result) ? "failed" : "completed") };
 		} catch (error) {
 			job.results[index] = { ...job.results[index], exitCode: 1, state: job.controller.signal.aborted ? "cancelled" : "failed", errorMessage: failure(error) };
-		} finally { release?.(); await fs.rm(job.files[index].configPath, { force: true }).catch(() => {}); this.publish(job); }
+		} finally {
+			if (timer) clearTimeout(timer);
+			job.controller.signal.removeEventListener("abort", abort);
+			if (timedOut) job.results[index] = { ...job.results[index], ...timeoutDetails(), state: "failed", exitCode: 1 };
+			release?.(); await fs.rm(job.files[index].configPath, { force: true }).catch(() => {}); this.publish(job);
+		}
 	}
 	private async execute(job: Job): Promise<SubagentDetails> {
 		try {

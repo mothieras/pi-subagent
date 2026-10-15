@@ -30,6 +30,8 @@ test("conventional skill directory symlinks advertise the guide without loading 
 	assert.equal(skill.name, "pi-subagent");
 	assert.equal(skill.disableModelInvocation, false);
 	assert.match(skill.description, /subagent\/subagent_task/);
+	assert.match(skill.description, /runtime|timeout/);
+	assert.ok(skill.description.length <= 200, "Keep the always-loaded routing description short");
 	const body = await fs.readFile(skill.filePath, "utf8");
 	assert.match(body, /^# Delegation guide$/m);
 	assert.ok(body.split("\n").length <= 100, "Keep the guide short");
@@ -55,7 +57,7 @@ test("package manifest exposes the guide alongside tools and prompts, with optio
 	}
 });
 
-test("guide examples satisfy the tool schema and clear writable/external user defaults", async () => {
+test("guide examples satisfy the tool schema, clear writable/external defaults and bound child runtime", async () => {
 	const body = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf8");
 	const examples = [...body.matchAll(/```json\n([\s\S]*?)\n```/g)].map((match) => JSON.parse(match[1]) as RunRequest);
 	assert.ok(examples.length > 0, "Keep at least one complete call example");
@@ -63,11 +65,13 @@ test("guide examples satisfy the tool schema and clear writable/external user de
 		assert.equal(Value.Check(SubagentParams, request), true, JSON.stringify(request));
 		const run = resolveRun(request, {
 			cwd: path.resolve("."), parentModel: "fake/test", parentThinking: "high", agents: [], projectAgentsDir: null,
-			availableModels: ["fake/test"], defaults: { tools: { allow: ["bash", "edit", "write"], extensions: ["./default-tools.ts"], mcp: ["default_server"] } },
+			availableModels: ["fake/test"], defaults: { timeoutMs: 60000, tools: { allow: ["bash", "edit", "write"], extensions: ["./default-tools.ts"], mcp: ["default_server"] } },
 		});
 		assert.equal(run.background, true);
 		assert.equal(run.tasks[0].agentSource, "inline");
 		assert.equal(run.tasks[0].readOnly, true);
+		assert.equal(run.tasks[0].timeoutMs, 120000);
+		assert.equal(run.tasks[0].provenance.timeoutMs, "call");
 		assert.deepEqual(run.tasks[0].tools, { allow: ["read", "grep", "find", "ls"], extensions: [], mcp: [] });
 	}
 });

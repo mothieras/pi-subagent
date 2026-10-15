@@ -4,8 +4,13 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ## [Unreleased]
 
+### Added
+
+- Optional per-child `config.timeoutMs` runtime deadlines with item/call/role/user-default precedence and explicit `0` to disable an inherited limit. Queueing is excluded; timed-out children fail after cancellation cleanup, retain output and reported usage, skip later chain steps, and leave parallel siblings running.
+
 ### Changed
 
+- Move detailed delegation, runtime-limit, and result-collection guidance into the on-demand skill; shorten tool summaries while retaining standalone call essentials and safety boundaries.
 - Make the default npm installation command use the latest published release, while retaining explicit version-pinning and update guidance.
 
 ## [0.1.5] - 2026-10-12

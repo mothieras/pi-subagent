@@ -33,6 +33,7 @@ Shared options:
   "config": {
     "model": "inherit",
     "thinking": "high",
+    "timeoutMs": 120000,
     "rolePrompt": {
       "replace": "You are a code reviewer.",
       "append": "Focus on authorization bypasses."
@@ -48,6 +49,7 @@ Shared options:
 
 - `model`: exact `provider/id`, a unique exact model ID, or `"inherit"`. No fuzzy matching or silent fallback. Explicit provider extensions may introduce a model unknown to the parent, but require an exact `provider/id` and child catalog validation.
 - `thinking`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `"inherit"`. Pi clamps it to model capabilities; results/status report the actual value.
+- `timeoutMs`: optional per-child runtime deadline in milliseconds; `0` disables an inherited limit. There is no built-in deadline. See [runtime deadlines](#runtime-deadlines).
 - `rolePrompt.replace`: replace the selected role instructions. `rolePrompt.append`: append instructions to that role.
 - `systemPrompt`: independently replace Pi's base prompt; the explicitly selected role and working directory remain. Tool permissions are enforced separately from prompt text.
 - `tools.allow`: exact tool-name allowlist. `[]` exposes no tools. Wildcards and `+/-` selectors are unsupported.
@@ -68,6 +70,22 @@ Built-in defaults inherit model/thinking, expose `read,bash,edit,write`, and sel
 
 Relative call paths, including item `cwd` and extension overrides, resolve from the parent invocation directory, not from an overridden task directory. Role extension paths resolve from the role file's directory. User-default paths resolve from the agent directory.
 
+### Runtime deadlines
+
+`config.timeoutMs` accepts an integer from `0` through `2147483647`. Invalid values fail validation; strings are not coerced. The built-in default is no deadline. Item > call > role > user-default precedence applies; an explicit `0` disables an inherited deadline.
+
+Each child receives its own deadline. The clock starts immediately before runner invocation, after acquiring a process slot and preparing the expanded task/config. Queueing, admission, approval, and task preparation are excluded. Child startup/bootstrap, model requests, tools, and runner finalization are included. This is not a group-wide or per-tool budget; a chain can run longer than one child's limit.
+
+When a deadline expires:
+
+- The affected child is marked `cancelling` with `timedOut: true` and a diagnostic, and receives the existing cancellation/termination sequence. Cleanup can extend beyond `timeoutMs`; process slots and writer reservations are not released merely because the timer fired.
+- After runner cleanup, that child has `state: "failed"`, a nonzero `exitCode`, `timedOut: true`, and an `errorMessage` naming the limit. Status and foreground result details expose these fields; retained output reads include the diagnostic.
+- Later chain steps are skipped. Parallel siblings keep running; once all items settle, a group with a timed-out child fails unless the group was explicitly cancelled.
+- Explicit cancellation before the deadline remains cancellation, not timeout. If the deadline fires first, that child retains the timeout failure even if the group is subsequently cancelled. Normal completion and cancellation clear the child's deadline and parent-abort listener.
+- Retained output and reported usage remain available under existing retention/accounting rules. Graceful shutdown summaries can be complete; hard kills or missing summaries must not be reported as complete usage. Background notification and result-delivery rules are unchanged.
+
+**A deadline is not a mutation-safe boundary or rollback.** It can interrupt a write or external action. Use narrow assignments and inspect partial changes before retrying. There is no new OS sandbox, and existing crash/escaped-process cleanup limitations still apply.
+
 ## Markdown roles
 
 ```markdown
@@ -80,6 +98,7 @@ tools:
   mcp: []
 model: inherit
 thinking: inherit
+timeoutMs: 120000
 ---
 
 Investigate the repository and return exact paths, line numbers, and evidence.
