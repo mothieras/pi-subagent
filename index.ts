@@ -115,7 +115,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	pi.registerMessageRenderer("subagent-complete", (message, _options, theme) => new Text(theme.fg("accent", typeof message.content === "string" ? message.content : "Background subagent completed"), 0, 0));
 	pi.registerTool({
 		name: "subagent", label: "Subagent", exposure: "model-only", parameters: SubagentParams,
-		description: "Delegate self-contained tasks using optional Markdown roles or inline config. Choose exactly one of task, tasks (independent parallel), chain (sequential; {previous} output). Built-in defaults inherit model/thinking and allow read,bash,edit,write. Children do not inherit parent conversation, skills or extensions/MCP; supply context and explicit trusted tool sources. For read-only work set config.tools to {allow:[read,grep,find,ls],extensions:[],mcp:[]}. Default role scope user. background:true returns a session task ID; uncollected completions auto-notify. No recursive delegation or OS sandbox. Shared-worktree parallel writers require explicit allowSharedWrites:true.",
+		description: "Delegate self-contained tasks using optional Markdown roles or inline config. Choose exactly one of task, tasks (independent parallel), chain (sequential; {previous} output). Built-in defaults inherit model/thinking and allow read,bash,edit,write. Children do not inherit parent conversation, skills or extensions/MCP; supply context and explicit trusted tool sources. For read-only work set config.tools to {allow:[read,grep,find,ls],extensions:[],mcp:[]}. Default role scope user. config.timeoutMs bounds each child from runner invocation (queueing excluded); no built-in deadline; 0 disables an inherited limit. Timeout fails that child after cleanup, skips later chain steps, and does not stop parallel siblings or roll back writes. background:true returns a session task ID; uncollected completions auto-notify. No recursive delegation or OS sandbox. Shared-worktree parallel writers require explicit allowSharedWrites:true.",
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const request = params as RunRequest;
 			const tasks = ensureManager(ctx);
@@ -173,7 +173,8 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 				const details = params.action === "cancel" ? await tasks.cancel(params.taskId) : tasks.status(params.taskId);
 				const data = { taskId: details.taskId, state: details.state, mode: details.mode, usage: details.usage, resultDelivered: details.resultDelivered, expired: details.expired,
 					results: details.results.map((result) => ({ itemId: result.itemId, agent: result.agent, state: result.state, model: result.model,
-						thinking: result.thinking, tools: result.resolved?.tools, roleFile: result.resolved?.agentFile,
+						thinking: result.thinking, timeoutMs: result.resolved?.timeoutMs, timedOut: result.timedOut, exitCode: result.exitCode,
+						tools: result.resolved?.tools, roleFile: result.resolved?.agentFile,
 						shadowedFiles: result.resolved?.shadowedFiles, provenance: result.resolved?.provenance,
 						usage: result.usage, usageComplete: result.usageComplete, errorMessage: result.errorMessage })) };
 				return { content: [{ type: "text", text: capText(JSON.stringify(data)) }], details: data };

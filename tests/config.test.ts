@@ -188,6 +188,10 @@ const badFrontmatter: Array<[string, string, RegExp]> = [
 	["wildcard tool", 'tools: ["*"]', /exact tool name/],
 	["model scalar", "model: true", /model.*string/],
 	["thinking value", "thinking: intense", /thinking.*expected/],
+	["negative timeout", "timeoutMs: -1", /timeoutMs.*integer/],
+	["fractional timeout", "timeoutMs: 1.5", /timeoutMs.*integer/],
+	["string timeout", 'timeoutMs: "1000"', /timeoutMs.*integer/],
+	["overflow timeout", "timeoutMs: 2147483648", /timeoutMs.*integer/],
 	["system scalar", "systemPrompt: [text]", /systemPrompt.*string/],
 	["prompt scalar", "rolePrompt: text", /rolePrompt.*object/],
 	["prompt typo", "rolePrompt:\n  replce: text", /unknown property.*replce/],
@@ -337,6 +341,42 @@ test("thinking supports every agreed level, explicit inheritance and missing-par
 	assert.equal(inherited.provenance["model.selection"], "call");
 	assert.equal(inherited.provenance["thinking.selection"], "call");
 	assert.equal(only({ task: "work" }, f.environment({ parentThinking: undefined })).thinking, "off");
+});
+
+test("timeoutMs resolves from defaults, role, call and item, with zero explicitly disabling it", (t) => {
+	const f = fixture(t);
+	f.role("user", "bounded", "timeoutMs: 2000");
+	const environment = f.environment({ agents: f.discover().agents, defaults: { timeoutMs: 1000 } });
+	assert.equal(only({ task: "work" }, f.environment()).timeoutMs, undefined);
+	for (const [request, timeoutMs, source] of [
+		[{ task: "work" }, 1000, "defaults"],
+		[{ agent: "bounded", task: "work" }, 2000, "role"],
+		[{ agent: "bounded", task: "work", config: { timeoutMs: 3000 } }, 3000, "call"],
+		[{ tasks: [{ agent: "bounded", task: "work", config: { timeoutMs: 4000 } }], config: { timeoutMs: 3000 } }, 4000, "item"],
+		[{ chain: [{ agent: "bounded", task: "work", config: { timeoutMs: 0 } }], config: { timeoutMs: 3000 } }, 0, "item"],
+	] as const) {
+		const resolved = only(request as RunRequest, environment);
+		assert.equal(resolved.timeoutMs, timeoutMs);
+		assert.equal(resolved.provenance.timeoutMs, source);
+		assert.equal(Value.Check(SubagentParams, request), true);
+	}
+	for (const timeoutMs of [0, 1, 2147483647]) {
+		assert.equal(only({ task: "work", config: { timeoutMs } }, environment).timeoutMs, timeoutMs);
+		assert.equal(Value.Check(RunConfigSchema, { timeoutMs }), true);
+	}
+});
+
+test("timeoutMs rejects invalid values in every configuration layer without coercion", (t) => {
+	const f = fixture(t);
+	for (const timeoutMs of [-1, 0.5, 2147483648, NaN, Infinity, "1000", null, true, undefined]) {
+		const config = { timeoutMs } as RunConfig;
+		assert.throws(() => only({ task: "work", config }, f.environment()), /timeoutMs.*integer/);
+		assert.throws(() => only({ tasks: [{ task: "work", config }] }, f.environment()), /timeoutMs.*integer/);
+		assert.throws(() => only({ task: "work", config: { timeoutMs: 0 } }, f.environment({ defaults: config })), /timeoutMs.*integer/);
+		const role: AgentConfig = { name: "bad", description: "invalid timeout", systemPrompt: "", source: "user", filePath: path.join(f.user, "bad.md"), config };
+		assert.throws(() => only({ agent: "bad", task: "work" }, f.environment({ agents: [role] })), /timeoutMs.*integer/);
+		if (timeoutMs !== undefined) assert.equal(Value.Check(RunConfigSchema, config), false);
+	}
 });
 
 test("leaf precedence is item > call > role > defaults; arrays replace, not union", (t) => {

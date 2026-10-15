@@ -162,6 +162,31 @@ test("background paths return IDs, detach caller and notify once at parent settl
 	await f.emit("agent_before_settle"); assert.equal(f.notifications.length, 1);
 	assert.ok(!f.notifications[0].message.content.includes("Task: background"));
 });
+for (const background of [false, true]) test(`${background ? "background" : "foreground"} timeout exposes structured status and cancel diagnostics`, async (t) => {
+	const f = await fixture(t, { hold: true });
+	const answer = await f.call("subagent", { task: "bounded", background, config: { timeoutMs: 100, tools: { allow: ["read"] } } });
+	const taskId = answer.details.taskId;
+	if (!background) {
+		assert.equal(answer.isError, true);
+		assert.equal(answer.details.results[0].timedOut, true);
+		assert.match(answer.content[0].text, /timed out after 100 ms/);
+	}
+	await waitFor(async () => (await f.call("subagent_task", { action: "status", taskId })).details.state === "failed");
+	for (const action of ["status", "cancel"]) {
+		const response = await f.call("subagent_task", { action, taskId });
+		for (const data of [response.details, JSON.parse(response.content[0].text)]) {
+			assert.equal(data.state, "failed");
+			assert.equal(data.results[0].timedOut, true);
+			assert.equal(data.results[0].timeoutMs, 100);
+			assert.equal(data.results[0].exitCode, 1);
+			assert.match(data.results[0].errorMessage, /timed out after 100 ms/);
+			assert.equal(data.usage.input, 10);
+		}
+	}
+	assert.equal(f.configs[0].task.timeoutMs, 100);
+	await f.emit("agent_before_settle"); await f.emit("agent_before_settle");
+	assert.equal(f.notifications.length, background ? 1 : 0);
+});
 test("complete parallel and chain results consume pending reminders without changing usage", async (t) => {
 	const f = await fixture(t);
 	for (const items of [{ tasks: [{ task: "one" }, { task: "two" }] }, { chain: [{ task: "one" }, { task: "two {previous}" }] }]) {

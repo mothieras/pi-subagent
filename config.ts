@@ -20,7 +20,8 @@ export interface ResolveEnvironment {
 
 export const MAX_PARALLEL_TASKS = 8;
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const CONFIG_KEYS = ["model", "thinking", "rolePrompt", "systemPrompt", "tools"];
+export const MAX_TIMEOUT_MS = 2_147_483_647;
+const CONFIG_KEYS = ["model", "thinking", "timeoutMs", "rolePrompt", "systemPrompt", "tools"];
 const TOOL_KEYS = ["allow", "extensions", "mcp"] as const;
 const REQUEST_KEYS = ["agent", "task", "tasks", "chain", "config", "cwd", "agentScope", "background", "notify", "allowSharedWrites"];
 const ITEM_KEYS = ["agent", "task", "cwd", "config"];
@@ -57,6 +58,9 @@ export function assertRunConfig(value: unknown, label = "config"): asserts value
 	assertObject(value, label);
 	assertKnownKeys(value, CONFIG_KEYS, label);
 	if (own(value, "model")) assertString(value.model, `${label}.model`);
+	if (own(value, "timeoutMs") && (!Number.isInteger(value.timeoutMs) || (value.timeoutMs as number) < 0 || (value.timeoutMs as number) > MAX_TIMEOUT_MS)) {
+		fail(`${label}.timeoutMs`, `expected an integer from 0 to ${MAX_TIMEOUT_MS} (0 disables the deadline)`);
+	}
 	if (own(value, "thinking") && value.thinking !== "inherit" && !THINKING_LEVELS.includes(value.thinking as ThinkingLevel)) {
 		fail(`${label}.thinking`, `expected inherit or one of ${THINKING_LEVELS.join(", ")}`);
 	}
@@ -221,7 +225,7 @@ export function resolveRun(request: RunRequest, environment: ResolveEnvironment)
 		const provenance: Record<string, string> = {};
 		const merged: RunConfig = {};
 		const merge = (config: RunConfig, source: string): void => {
-			for (const key of ["model", "thinking", "systemPrompt"] as const) {
+			for (const key of ["model", "thinking", "timeoutMs", "systemPrompt"] as const) {
 				if (config[key] !== undefined) {
 					Object.assign(merged, { [key]: config[key] });
 					provenance[key] = source;
@@ -276,6 +280,7 @@ export function resolveRun(request: RunRequest, environment: ResolveEnvironment)
 			agent: agent?.name ?? "inline", agentSource: agent?.source ?? "inline",
 			...(agent ? { agentFile: agent.filePath } : {}), shadowedFiles,
 			task: item.task, cwd, model, thinking, rolePrompt,
+			...(merged.timeoutMs !== undefined ? { timeoutMs: merged.timeoutMs } : {}),
 			...(merged.systemPrompt !== undefined ? { systemPrompt: merged.systemPrompt } : {}), tools,
 			readOnly: tools.allow.every((tool) => READ_ONLY_TOOLS.has(tool)) && tools.extensions.length === 0 && tools.mcp.length === 0,
 			provenance,

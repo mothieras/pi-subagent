@@ -82,6 +82,7 @@ Background tasks and retained results do not survive exit, session switch, or re
 **Isolation is not an OS sandbox.** Tools and executable sources retain host permissions; `cwd` does not restrict filesystem access.
 
 - Defaults include write-capable tools. Use an explicit read-only allowlist for investigations.
+- Set `config.timeoutMs` to bound each child's runtime, excluding queueing. There is no built-in deadline; `0` disables an inherited limit; a timeout stops that child through normal cleanup but does not roll back changes. See [runtime deadlines](docs/API.md#runtime-deadlines).
 - Children receive only selected extensions/MCP sources. Untrusted project roles and executable sources require approval; no UI does not imply approval.
 - Shared-worktree parallel writers require explicit consent. Prefer separate worktrees or sequential implementation/review; this extension creates neither worktrees nor merges.
 - Verify child output before integration. Completion messages grant no permissions, and cancellation does not roll back changes.

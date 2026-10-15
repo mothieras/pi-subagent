@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { MAX_PARALLEL_TASKS, THINKING_LEVELS } from "./config.ts";
+import { MAX_PARALLEL_TASKS, MAX_TIMEOUT_MS, THINKING_LEVELS } from "./config.ts";
 
 const strict = { additionalProperties: false } as const;
 const nonempty = () => Type.String({ minLength: 1, pattern: "\\S" });
@@ -9,6 +9,7 @@ const stringEnum = <T extends string>(values: readonly T[]) => Type.Union(values
 export const RunConfigSchema = Type.Object({
 	model: Type.Optional(Type.String({ description: 'Exact provider/id or unique exact model ID; "inherit" uses the parent.' })),
 	thinking: Type.Optional(stringEnum([...THINKING_LEVELS, "inherit"] as const)),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: MAX_TIMEOUT_MS, description: "Per-child runtime limit in milliseconds from runner invocation, excluding queueing. Unset inherits; no built-in deadline. 0 disables an inherited limit. Timeout fails the child after cancellation cleanup; no rollback." })),
 	rolePrompt: Type.Optional(Type.Object({
 		replace: Type.Optional(Type.String({ description: "Replace the role prompt, not Pi's base system prompt. Empty text clears it." })),
 		append: Type.Optional(Type.String({ description: "Append to the selected role prompt." })),

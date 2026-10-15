@@ -5,6 +5,7 @@ export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export interface RunConfig {
 	model?: string;
 	thinking?: ThinkingLevel | "inherit";
+	timeoutMs?: number;
 	rolePrompt?: { replace?: string; append?: string };
 	systemPrompt?: string;
 	tools?: { allow?: string[]; extensions?: string[]; mcp?: string[] };
@@ -31,6 +32,7 @@ export interface ResolvedTask {
 	cwd: string;
 	model: string;
 	thinking: ThinkingLevel;
+	timeoutMs?: number;
 	rolePrompt: string;
 	systemPrompt?: string;
 	tools: { allow: string[]; extensions: string[]; mcp: string[] };
@@ -76,6 +78,7 @@ export interface SingleResult {
 	model?: string;
 	thinking?: ThinkingLevel;
 	stopReason?: string;
+	timedOut?: boolean;
 	errorMessage?: string;
 	step?: number;
 	state?: TaskState;

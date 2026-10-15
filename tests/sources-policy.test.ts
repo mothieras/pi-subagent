@@ -43,6 +43,19 @@ test("user config is strict, absent is safe, invalid config never widens default
 		f.write(path.join(f.agentDir, "subagent.json"), raw); assert.throws(() => readUserConfig(f.agentDir));
 	}
 });
+test("user timeout defaults reach resolution and invalid limits fail closed", (t) => {
+	const f = fixture(t);
+	const file = path.join(f.agentDir, "subagent.json");
+	for (const timeoutMs of [0, 120000]) {
+		f.write(file, { defaults: { timeoutMs } });
+		const defaults = readUserConfig(f.agentDir).defaults;
+		assert.equal(resolveRun({ task: "x" }, { cwd: f.cwd, agents: [], parentModel: "fake/test", defaults }).tasks[0].timeoutMs, timeoutMs);
+	}
+	for (const timeoutMs of [-1, 1.5, 2147483648, "1000", null]) {
+		f.write(file, { defaults: { timeoutMs } });
+		assert.throws(() => readUserConfig(f.agentDir), /timeoutMs.*integer/);
+	}
+});
 test("MCP snapshots load only explicitly selected names; do not evaluate credential commands", (t) => {
 	const f = fixture(t); const marker = path.join(f.root, "must-not-exist");
 	f.write(path.join(f.agentDir, "mcp.json"), { mcpServers: { docs: { url: "https://invalid.example/mcp", headers: { Authorization: `!touch ${marker}` } }, other: { command: "must-not-run" } } });
