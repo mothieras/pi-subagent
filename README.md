@@ -106,7 +106,7 @@ Manual macOS smoke tests covered Terminal/Ghostty TUI, lifecycle cleanup, and re
 | Repository rules for coding agents | [AGENTS.md](AGENTS.md) |
 | Release history | [Changelog](CHANGELOG.md) |
 
-Contributions are welcome. Start with a small, reproducible issue or focused PR; discuss public-contract or permission changes before implementing them. Tool descriptions remain usable without the skill; `/skill:pi-subagent <task>` explicitly loads the installed guide.
+Contributions are welcome. Start with a small, reproducible issue or focused PR; discuss public-contract or permission changes before implementing them. Tool summaries retain call essentials and safety boundaries; detailed orchestration guidance lives in the on-demand skill. `/skill:pi-subagent <task>` explicitly loads the installed guide.
 
 ## License and attribution
 

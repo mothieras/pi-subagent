@@ -71,8 +71,23 @@ async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean
 		return answer;
 	};
 	const complete = (task: string, failed = false) => { const release = releases.get(task); assert.ok(release, `No held child: ${task}`); release(failed); };
-	return { pi, ctx, root, entries, notifications, configs, statuses, commands, handlers, call, emit, complete, held: () => releases.size, launched: () => launched };
+	return { pi, ctx, root, entries, notifications, configs, statuses, tools, commands, handlers, call, emit, complete, held: () => releases.size, launched: () => launched };
 }
+test("tool summaries stay compact and preserve call essentials without loading the skill", async (t) => {
+	const f = await fixture(t);
+	const delegate = f.tools.get("subagent"); const management = f.tools.get("subagent_task");
+	assert.ok(delegate.description.length <= 450, "Keep orchestration detail in the on-demand skill");
+	assert.ok(management.description.length <= 300, "Keep result-retrieval detail in the on-demand skill");
+	for (const boundary of ["task", "parallel", "chain", "previous", "parent", "write", "read,grep,find,ls", "extensions:[]", "mcp:[]", "allowSharedWrites", "recursive", "sandbox", "pi-subagent"]) {
+		assert.ok(delegate.description.includes(boundary), `Keep ${boundary} visible without the skill`);
+	}
+	for (const essential of ["taskId", "nextCursor", "complete final-output delivery", "session-local", "/session", "pi-subagent"]) {
+		assert.ok(management.description.includes(essential), `Keep ${essential} visible without the skill`);
+	}
+	const deadline = delegate.parameters.properties.config.properties.timeoutMs.description;
+	assert.ok(deadline.length <= 140, "Describe the field once; put deadline workflow guidance in the skill");
+	assert.match(deadline, /queueing/); assert.match(deadline, /0 disables/);
+});
 test("extension exposes arbitrary inline overrides, foreground output and its own ledger (no native charge)", async (t) => {
 	const f = await fixture(t);
 	const answer = await f.call("subagent", { task: "first", config: { thinking: "low", rolePrompt: { replace: "review", append: "extra" }, tools: { allow: ["read"] } } });

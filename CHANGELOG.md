@@ -10,6 +10,7 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ### Changed
 
+- Move detailed delegation, runtime-limit, and result-collection guidance into the on-demand skill; shorten tool summaries while retaining standalone call essentials and safety boundaries.
 - Make the default npm installation command use the latest published release, while retaining explicit version-pinning and update guidance.
 
 ## [0.1.5] - 2026-10-12

@@ -115,7 +115,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	pi.registerMessageRenderer("subagent-complete", (message, _options, theme) => new Text(theme.fg("accent", typeof message.content === "string" ? message.content : "Background subagent completed"), 0, 0));
 	pi.registerTool({
 		name: "subagent", label: "Subagent", exposure: "model-only", parameters: SubagentParams,
-		description: "Delegate self-contained tasks using optional Markdown roles or inline config. Choose exactly one of task, tasks (independent parallel), chain (sequential; {previous} output). Built-in defaults inherit model/thinking and allow read,bash,edit,write. Children do not inherit parent conversation, skills or extensions/MCP; supply context and explicit trusted tool sources. For read-only work set config.tools to {allow:[read,grep,find,ls],extensions:[],mcp:[]}. Default role scope user. config.timeoutMs bounds each child from runner invocation (queueing excluded); no built-in deadline; 0 disables an inherited limit. Timeout fails that child after cleanup, skips later chain steps, and does not stop parallel siblings or roll back writes. background:true returns a session task ID; uncollected completions auto-notify. No recursive delegation or OS sandbox. Shared-worktree parallel writers require explicit allowSharedWrites:true.",
+		description: "Delegate one task, parallel tasks, or a sequential chain ({previous} handoff); roles optional. Children inherit no parent context/skills or external tools. Defaults can write; read-only config.tools:{allow:[read,grep,find,ls],extensions:[],mcp:[]}. Shared-worktree parallel writers require allowSharedWrites:true. No recursive delegation or OS sandbox. Use the pi-subagent skill for orchestration.",
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const request = params as RunRequest;
 			const tasks = ensureManager(ctx);
@@ -153,7 +153,7 @@ export default function subagentExtension(pi: ExtensionAPI, dependencies: { runn
 	});
 	pi.registerTool({
 		name: "subagent_task", label: "Subagent Task", exposure: "model-only", annotations: { readOnlyHint: true }, parameters: TaskManagementParams,
-		description: "Manage session-local subagent tasks: list (extension usage totals), status, result (output/log; page with returned nextCursor), cancel. taskId required except list. Complete final output delivery automatically consumes pending completion reminders; status/log/partial reads do not. Queries/notifications do not duplicate usage. Results/logs are private temporary files, cleared on exit/switch/reload or retention eviction. Native Pi /session excludes child calls.",
+		description: "List child usage/tasks, inspect status, page results/logs, or cancel. taskId required except list. Follow nextCursor until null; only complete final-output delivery consumes reminders. Tasks/results are session-local; child usage is separate from /session. See the pi-subagent skill.",
 		async execute(id, params, signal, _onUpdate, ctx) {
 			const tasks = ensureManager(ctx);
 			try {
