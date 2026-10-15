@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { emptyUsage, type ChildConfig, type CompletionNotice, type ResolvedRun, type ResolvedTask, type ResultPage, type RunChild, type RunnerFiles, type SingleResult, type SubagentDetails, type TaskState, type UsageStats } from "./contracts.ts";
+import { emptyUsage, type ChildConfig, type CompletionNotice, type ResolvedRun, type ResolvedTask, type ResultPage, type RunChild, type RunnerFiles, type SingleResult, type SubagentDetails, type TaskState, type TaskSummary, type UsageStats } from "./contracts.ts";
 import { aggregateUsage, getFinalOutput } from "./process-runner.ts";
 
 const executeFile = promisify(execFile);
@@ -100,19 +100,28 @@ export class SessionTasks {
 		}
 		return { active, queued };
 	}
+	private itemSnapshot(result: SingleResult, now: number): SingleResult {
+		return { ...result, elapsedMs: result.startedAt === undefined ? undefined : Math.max(0, (result.finishedAt ?? now) - result.startedAt) };
+	}
 	private snapshot(job: Job): SubagentDetails {
+		const now = Date.now();
 		return structuredClone({ mode: job.run.mode, agentScope: job.run.agentScope, projectAgentsDir: job.run.projectAgentsDir,
-			results: job.results, taskId: job.id, state: job.state, resultDelivered: job.resultDelivered, expired: job.expired,
+			results: job.results.map((result) => this.itemSnapshot(result, now)), taskId: job.id, state: job.state, resultDelivered: job.resultDelivered, expired: job.expired,
 			usage: aggregateUsage(job.results.map((result) => result.usage)) });
 	}
 	private publish(job: Job): void { try { job.update?.(this.snapshot(job)); } catch { /* UI errors do not own the job */ } }
 	private get(id: string): Job { const job = this.jobs.get(id); if (!job) throw new Error(`Unknown or expired session task: ${id}`); return job; }
 	status(id: string): SubagentDetails { return this.snapshot(this.get(id)); }
-	list(): Array<{ taskId: string; state: TaskState; mode: ResolvedRun["mode"]; startedAt: number; finishedAt?: number; expired: boolean; resultDelivered: boolean; progress: { total: number; done: number }; usage: UsageStats }> {
+	list(): TaskSummary[] {
+		const now = Date.now();
 		return [...this.jobs.values()].map((job) => ({ taskId: job.id, state: job.state, mode: job.run.mode,
 			startedAt: job.startedAt, finishedAt: job.finishedAt, expired: job.expired, resultDelivered: job.resultDelivered,
 			progress: { total: job.results.length, done: job.results.filter((result) => terminal(result.state)).length },
-			usage: aggregateUsage(job.results.map((result) => result.usage)) }));
+			usage: aggregateUsage(job.results.map((result) => result.usage)),
+			results: job.results.map((result) => {
+				const { itemId, agent, state, step, startedAt, finishedAt, elapsedMs, currentTool, lastEventAt } = this.itemSnapshot(result, now);
+				return { itemId, agent, state, step, startedAt, finishedAt, elapsedMs, currentTool, lastEventAt };
+			}) }));
 	}
 	/** Notifications are hints; dispatch eligibility is independent of retained results and usage. */
 	pendingNotifications(): CompletionNotice[] {
@@ -220,16 +229,17 @@ export class SessionTasks {
 		try {
 			release = await this.slots.acquire(job.controller.signal);
 			if (job.controller.signal.aborted) throw new Error("Cancelled before execution");
-			job.state = "running"; placeholder.state = "running";
 			const task = { ...job.run.tasks[index], task: job.run.mode === "chain" ? job.run.tasks[index].task.replace(/\{previous\}/g, () => previous) : job.run.tasks[index].task };
 			// Chain task expansion must reach BOTH the CLI prompt and the bootstrap snapshot.
 			const config: ChildConfig = JSON.parse(await fs.readFile(job.files[index].configPath, "utf8"));
 			config.task = task;
 			if (Buffer.byteLength(JSON.stringify(config)) > 512 * 1024) throw new Error("Expanded chain task/config exceeds 512 KiB");
 			await fs.writeFile(job.files[index].configPath, JSON.stringify(config), { mode: 0o600 });
+			job.state = "running"; placeholder.state = "running";
 			this.publish(job);
 			if (job.controller.signal.aborted) throw new Error("Cancelled before child launch");
 			job.controller.signal.addEventListener("abort", abort, { once: true });
+			placeholder.startedAt = Date.now();
 			if (task.timeoutMs) timer = setTimeout(() => {
 				if (controller.signal.aborted) return; // Explicit cancellation won the race.
 				timedOut = true;
@@ -238,10 +248,11 @@ export class SessionTasks {
 				this.publish(job);
 			}, task.timeoutMs);
 			const result = await this.options.runner(task, job.files[index], controller.signal, (result) => {
-				job.results[index] = { ...result, ...timeoutDetails(), itemId: placeholder.itemId, step: placeholder.step, state: controller.signal.aborted ? "cancelling" : "running" };
+				job.results[index] = { ...result, ...timeoutDetails(), startedAt: placeholder.startedAt, finishedAt: undefined,
+					itemId: placeholder.itemId, step: placeholder.step, state: controller.signal.aborted ? "cancelling" : "running" };
 				this.publish(job);
 			});
-			job.results[index] = { ...result, itemId: placeholder.itemId, step: placeholder.step,
+			job.results[index] = { ...result, startedAt: placeholder.startedAt, itemId: placeholder.itemId, step: placeholder.step,
 				state: job.controller.signal.aborted ? "cancelled" : result.state ?? (resultFailed(result) ? "failed" : "completed") };
 		} catch (error) {
 			job.results[index] = { ...job.results[index], exitCode: 1, state: job.controller.signal.aborted ? "cancelled" : "failed", errorMessage: failure(error) };
@@ -249,6 +260,8 @@ export class SessionTasks {
 			if (timer) clearTimeout(timer);
 			job.controller.signal.removeEventListener("abort", abort);
 			if (timedOut) job.results[index] = { ...job.results[index], ...timeoutDetails(), state: "failed", exitCode: 1 };
+			job.results[index].currentTool = undefined;
+			if (placeholder.startedAt !== undefined) job.results[index].finishedAt = Date.now();
 			release?.(); await fs.rm(job.files[index].configPath, { force: true }).catch(() => {}); this.publish(job);
 		}
 	}

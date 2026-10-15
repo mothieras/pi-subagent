@@ -142,6 +142,9 @@ export function createProcessRunner(options: ProcessRunnerOptions = {}): RunChil
 		const displays: Array<{ message: SingleResult["messages"][number]; bytes: number }> = [];
 		// Fixed-size identities, not retained full messages. Fail closed rather than lose deduplication.
 		const seen = new Set<string>();
+		// Parallel/nested tools can finish out of order. Display the latest still-active one.
+		const activeTools = new Map<string, string>();
+		let activeToolBytes = 0;
 		const stdoutDecoder = new StringDecoder("utf8");
 		const stdoutValidator = new TextDecoder("utf-8", { fatal: true });
 		const stderrDecoder = new StringDecoder("utf8");
@@ -335,6 +338,22 @@ export function createProcessRunner(options: ProcessRunnerOptions = {}): RunChil
 				if (!object(parsed) || typeof parsed.type !== "string") throw new Error("expected event object with type");
 				event = parsed;
 			} catch (error) { fail(`Invalid child JSONL: ${errorText(error)}`, true); return; }
+			result.lastEventAt = Date.now();
+			if (event.type === "tool_execution_start" && typeof event.toolCallId === "string" && typeof event.toolName === "string") {
+				if (!activeTools.has(event.toolCallId)) {
+					const bytes = Buffer.byteLength(event.toolCallId) + Buffer.byteLength(event.toolName);
+					if (activeTools.size >= 256 || activeToolBytes + bytes > messageLimit) { fail("Child tool activity exceeds display limit", true); return; }
+					activeTools.set(event.toolCallId, event.toolName); activeToolBytes += bytes;
+					result.currentTool = event.toolName;
+				}
+			} else if (event.type === "tool_execution_end" && typeof event.toolCallId === "string") {
+				const name = activeTools.get(event.toolCallId);
+				if (name !== undefined) {
+					activeToolBytes -= Buffer.byteLength(event.toolCallId) + Buffer.byteLength(name);
+					activeTools.delete(event.toolCallId);
+					result.currentTool = [...activeTools.values()].at(-1);
+				}
+			}
 			if (event.type === "subagent_error") {
 				fail(typeof event.error === "string" ? `Subagent configuration error: ${event.error}` : "Child bootstrap failed", true);
 				return;
@@ -416,7 +435,7 @@ export function createProcessRunner(options: ProcessRunnerOptions = {}): RunChil
 			} else if (event.type === "agent_settled" && event.aborted === true) {
 				result.stopReason = "aborted";
 			}
-			emit(event.type !== "message_update");
+			emit(event.type !== "message_update" && event.type !== "tool_execution_update");
 		};
 		const stdout = (chunk: Buffer) => {
 			writeLog(chunk);
@@ -552,6 +571,7 @@ export function createProcessRunner(options: ProcessRunnerOptions = {}): RunChil
 			partialUsage = undefined;
 			result.usageComplete = privateSummary.complete;
 		}
+		result.currentTool = undefined;
 		const final = snapshot();
 		final.usageComplete = Boolean(result.usageComplete && !protocolLost && !hardKilled);
 		final.state = cancelled ? "cancelled" : failure || result.exitCode !== 0 || ["error", "aborted", "pending", "deferred"].includes(result.stopReason ?? "") ? "failed" : "completed";

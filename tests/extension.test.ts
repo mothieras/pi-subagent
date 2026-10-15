@@ -9,6 +9,7 @@ import companion from "../compat/plan-mode.ts";
 import directoryCompanion from "../compat/plan-mode/index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { emptyUsage, type RunChild, type SingleResult } from "../contracts.ts";
+import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
 	for (let i = 0; i < 1000; i++) { if (await predicate()) return; await delay(2); }
 	assert.fail("Timed out waiting for fixture state");
@@ -31,8 +32,8 @@ async function fixture(t: TestContext, options: { hold?: boolean; plan?: boolean
 	const runner: RunChild = async (task, files, signal, update) => {
 		launched++; configs.push(JSON.parse(await fs.readFile(files.configPath, "utf8")));
 		const result: SingleResult = { agent: task.agent, agentSource: task.agentSource, task: task.task, exitCode: 0, messages: [], stderr: "", output: task.task,
-			state: "completed", resolved: task, model: task.model, thinking: task.thinking, usage: { ...emptyUsage(), input: 10, output: 2, turns: 1, totalTokens: 12, cost: 0.1 }, usageComplete: true };
-		update(result);
+			state: "completed", resolved: task, model: task.model, thinking: task.thinking, lastEventAt: Date.now(), usage: { ...emptyUsage(), input: 10, output: 2, turns: 1, totalTokens: 12, cost: 0.1 }, usageComplete: true };
+		update({ ...result, currentTool: "read" });
 		let failed = false;
 		if (options.hold) await new Promise<void>((resolve) => {
 			const finish = (failure = false) => { failed = failure; releases.delete(task.task); signal.removeEventListener("abort", abort); resolve(); };
@@ -164,6 +165,68 @@ test("TUI footer counts foreground children and retains the empty-session fallba
 	assert.equal(f.statuses.get("subagent"), "subagents: 2 turns ↑20 ↓4 $0.2000");
 	assert.equal(f.notifications.length, 0);
 });
+test("/subagents refreshes locally, exposes activity and stops refreshing after terminal cleanup", async (t) => {
+	const f = await fixture(t, { hold: true, tui: true });
+	t.mock.timers.enable({ apis: ["setInterval"] });
+	let view: any; let renders = 0;
+	const keys = new KeybindingsManager({ ...TUI_KEYBINDINGS, "app.interrupt": { defaultKeys: "ctrl+c" } });
+	f.ctx.ui.custom = (factory: any) => new Promise<void>((resolve) => {
+		view = factory({ terminal: { rows: 30 }, requestRender: () => { renders++; } }, { fg: (_color: string, text: string) => text, bold: (text: string) => text }, keys, resolve);
+	});
+	const started = await f.call("subagent", { task: "inspect me", background: true, notify: false, config: { tools: { allow: ["read"] } } });
+	await waitFor(() => f.held() === 1);
+	const calls = f.entries.length;
+	const panel = f.commands.get("subagents").handler("", f.ctx);
+	assert.ok(view);
+	assert.match(view.render(100).join("\n"), /running · \d+s/);
+	assert.match(view.render(100).join("\n"), /started \d{4}-/);
+	const before = renders; t.mock.timers.tick(1000);
+	assert.ok(renders > before); assert.equal(f.launched(), 1); assert.equal(f.entries.length, calls);
+	const status = await f.call("subagent_task", { action: "status", taskId: started.details.taskId });
+	for (const data of [status.details, JSON.parse(status.content[0].text)]) {
+		assert.equal(typeof data.results[0].startedAt, "number"); assert.equal(typeof data.results[0].elapsedMs, "number");
+		assert.equal(data.results[0].finishedAt, undefined);
+		assert.equal(data.results[0].currentTool, "read"); assert.equal(typeof data.results[0].lastEventAt, "number");
+	}
+	f.complete("inspect me");
+	await waitFor(async () => (await f.call("subagent_task", { action: "status", taskId: started.details.taskId })).details.state === "completed");
+	assert.match(view.render(100).join("\n"), /completed/);
+	const stopped = renders; t.mock.timers.tick(2000); assert.equal(renders, stopped, "No refresh timer after terminal cleanup");
+	assert.equal(f.notifications.length, 0);
+	view.handleInput("\u001b"); await panel;
+});
+test("/subagents does not read results or consume pending reminders and closes on tree/reload", async (t) => {
+	const f = await fixture(t, { tui: true });
+	let view: any;
+	f.ctx.ui.custom = (factory: any) => new Promise<void>((resolve) => {
+		view = factory({ terminal: { rows: 30 }, requestRender: () => {} }, { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+			new KeybindingsManager({ ...TUI_KEYBINDINGS, "app.interrupt": { defaultKeys: "ctrl+c" } }), resolve);
+	});
+	const started = await f.call("subagent", { task: "PRIVATE REPORT MUST NOT APPEAR", background: true, config: { tools: { allow: ["read"] } } });
+	await waitFor(async () => (await f.call("subagent_task", { action: "status", taskId: started.details.taskId })).details.state === "completed");
+	const before = (await f.call("subagent_task", { action: "list" })).details.usage;
+	let panel = f.commands.get("subagents").handler("", f.ctx);
+	assert.doesNotMatch(view.render(100).join("\n"), /PRIVATE REPORT/);
+	view.close(); await panel;
+	const status = await f.call("subagent_task", { action: "status", taskId: started.details.taskId });
+	assert.equal(status.details.resultDelivered, false); assert.deepEqual(status.details.usage, before);
+	assert.equal((await f.emit("agent_before_settle")).continue, true); assert.equal(f.notifications.length, 1);
+	for (const event of ["session_before_tree", "session_shutdown"]) {
+		panel = f.commands.get("subagents").handler("", f.ctx);
+		await f.emit(event); await panel;
+	}
+});
+test("/subagents in non-TUI modes does not construct a terminal UI or launch work", async (t) => {
+	const f = await fixture(t);
+	f.ctx.ui.custom = () => assert.fail("No terminal component outside TUI");
+	for (const mode of ["json", "rpc", "print"]) {
+		f.ctx.mode = mode;
+		await f.commands.get("subagents").handler("", f.ctx);
+	}
+	assert.equal(f.launched(), 0); assert.equal(f.entries.length, 0); assert.equal(f.notifications.length, 0);
+	assert.equal((await f.call("subagent_task", { action: "list" })).details.tasks.length, 0);
+});
+
 test("background paths return IDs, detach caller and notify once at parent settlement", async (t) => {
 	const f = await fixture(t, { hold: true }); const controller = new AbortController(); let toolUpdates = 0;
 	const launched = await f.call("subagent", { task: "background", background: true, config: { tools: { allow: ["read"] } } }, controller.signal, () => { toolUpdates++; });

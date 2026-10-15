@@ -1,8 +1,8 @@
 import * as os from "node:os";
 import { getMarkdownTheme, type AgentToolResult } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { RunRequest, SingleResult, SubagentDetails, UsageStats } from "./contracts.ts";
+import { Container, Markdown, Spacer, Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import type { KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import type { RunRequest, SingleResult, SubagentDetails, TaskItemSummary, TaskSummary, UsageStats } from "./contracts.ts";
 import { resultFailed, resultOutput } from "./tasks.ts";
 import { aggregateUsage } from "./process-runner.ts";
 
@@ -12,6 +12,69 @@ export function formatUsage(usage: Partial<UsageStats>, model?: string): string 
 		usage.cacheRead ? `R${tokens(usage.cacheRead)}` : "", usage.cacheWrite ? `W${tokens(usage.cacheWrite)}` : "", usage.cost ? `$${usage.cost.toFixed(4)}` : "",
 		usage.contextTokens ? `ctx:${tokens(usage.contextTokens)}` : "", model ?? ""].filter(Boolean).join(" ");
 }
+export function formatDuration(ms: number): string {
+	const seconds = Math.floor(Math.max(0, ms) / 1000);
+	return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m`;
+}
+// Activity labels come from child events/role files, not trusted terminal control sequences.
+const label = (text: string): string => text.slice(0, 160).replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+export function formatActivity(item: TaskItemSummary, now = Date.now()): string {
+	return [item.state ?? "", item.elapsedMs === undefined ? "not started" : formatDuration(item.elapsedMs),
+		item.currentTool ? `tool: ${label(item.currentTool)}` : "",
+		item.lastEventAt === undefined ? "" : `event ${formatDuration(now - item.lastEventAt)} ago`].filter(Boolean).join(" · ");
+}
+
+/** A read-only local view. Refreshes share the extension watcher; this owns no timer. */
+export class ActivityView implements Component {
+	private offset = 0;
+	private pageSize = 1;
+	private lineCount = 0;
+	private closed = false;
+	constructor(private read: () => { tasks: TaskSummary[]; usage: UsageStats }, private theme: Theme,
+		private keys: KeybindingsManager, private height: () => number, private requestRender: () => void, private done: () => void) {}
+	invalidate(): void {}
+	refresh(): void { if (!this.closed) this.requestRender(); }
+	close(): void { if (!this.closed) { this.closed = true; this.done(); } }
+	handleInput(data: string): void {
+		if (this.keys.matches(data, "tui.select.cancel") || this.keys.matches(data, "tui.select.confirm") || this.keys.matches(data, "app.interrupt")) { this.close(); return; }
+		if (this.keys.matches(data, "tui.select.up")) this.offset--;
+		else if (this.keys.matches(data, "tui.select.down")) this.offset++;
+		else if (this.keys.matches(data, "tui.select.pageUp")) this.offset -= this.pageSize;
+		else if (this.keys.matches(data, "tui.select.pageDown")) this.offset += this.pageSize;
+		this.offset = Math.max(0, Math.min(this.offset, this.lineCount - this.pageSize));
+		this.refresh();
+	}
+	render(width: number): string[] {
+		const { tasks, usage } = this.read();
+		const now = Date.now();
+		const lines: string[] = [];
+		// Active groups first, then newest retained completions. Never read task output here.
+		const active = (task: TaskSummary) => ["queued", "running", "cancelling"].includes(task.state);
+		for (const task of [...tasks].sort((a, b) => Number(active(b)) - Number(active(a)) || b.startedAt - a.startedAt)) {
+			lines.push(this.theme.fg("accent", `${task.mode} ${task.taskId}`));
+			lines.push(`${task.state} · ${task.progress.done}/${task.progress.total}${task.expired ? " · output expired" : ""}`);
+			for (const [index, item] of task.results.entries()) {
+				if (width < 80) {
+					lines.push(`  ${index + 1}. ${item.state} · ${label(item.agent)}`);
+					lines.push(`     ${formatActivity({ ...item, state: undefined }, now)}`);
+				} else lines.push(`  ${index + 1}. ${label(item.agent)} · ${formatActivity(item, now)}`);
+				if (item.startedAt !== undefined) lines.push(this.theme.fg("dim", `     started ${new Date(item.startedAt).toISOString()}`));
+			}
+			lines.push("");
+		}
+		if (!lines.length) lines.push("No subagent tasks in this session.");
+		this.pageSize = Math.max(1, Math.min(24, this.height() - 6));
+		this.lineCount = lines.length;
+		this.offset = Math.max(0, Math.min(this.offset, lines.length - this.pageSize));
+		const help = `${this.keys.getKeys("tui.select.cancel").join("/")}: close · ${this.keys.getKeys("tui.select.up").join("/")}/${this.keys.getKeys("tui.select.down").join("/")}: scroll`;
+		return [this.theme.fg("toolTitle", this.theme.bold("Subagents")), this.theme.fg("dim", `Usage: ${formatUsage(usage) || "0 turns"}`),
+			...lines.slice(this.offset, this.offset + this.pageSize),
+			this.theme.fg("muted", "Recent events are not proof of process health."),
+			this.theme.fg("dim", `${this.offset + 1}-${Math.min(lines.length, this.offset + this.pageSize)}/${lines.length} · ${help}`)]
+			.map((line) => truncateToWidth(line, Math.max(0, width)));
+	}
+}
+
 function toolPreview(name: string, args: Record<string, unknown>): string {
 	const shorten = (value: unknown) => String(value ?? "...").replace(os.homedir(), "~");
 	if (name === "bash") return `$ ${String(args.command ?? "...").slice(0, 100)}`;
@@ -43,7 +106,7 @@ export function renderResult(result: AgentToolResult<SubagentDetails>, { expande
 	if (!expanded) {
 		const lines = [header];
 		for (const item of details.results) {
-			lines.push(`${icon(item, theme)} ${theme.fg("accent", item.agent)} (${item.agentSource}) ${item.state ?? ""}`);
+			lines.push(`${icon(item, theme)} ${theme.fg("accent", item.agent)} (${item.agentSource}) ${formatActivity(item)}`);
 			if (item.errorMessage) lines.push(theme.fg("error", item.errorMessage.slice(0, 500)));
 			else lines.push(theme.fg("toolOutput", displayItems(item).slice(-10).join("\n") || "(no output)"));
 			lines.push(theme.fg("dim", formatUsage(item.usage, item.model)));
@@ -56,7 +119,7 @@ export function renderResult(result: AgentToolResult<SubagentDetails>, { expande
 	container.addChild(new Text(header, 0, 0));
 	for (const item of details.results) {
 		container.addChild(new Spacer(1));
-		container.addChild(new Text(`${icon(item, theme)} ${theme.fg("accent", item.agent)} (${item.agentSource})${item.step ? ` step ${item.step}` : ""}`, 0, 0));
+		container.addChild(new Text(`${icon(item, theme)} ${theme.fg("accent", item.agent)} (${item.agentSource})${item.step ? ` step ${item.step}` : ""} · ${formatActivity(item)}`, 0, 0));
 		if (item.resolved?.agentFile) container.addChild(new Text(theme.fg("dim", `Role: ${item.resolved.agentFile}`), 0, 0));
 		if (item.resolved?.shadowedFiles.length) container.addChild(new Text(theme.fg("warning", `Overrides: ${item.resolved.shadowedFiles.join(", ")}`), 0, 0));
 		container.addChild(new Text(theme.fg("dim", `Task: ${item.task}`), 0, 0));

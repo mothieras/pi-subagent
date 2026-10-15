@@ -162,7 +162,7 @@ Configuration is reread on each call. Only user configuration is loaded; project
 | Action | Required fields | Result |
 | --- | --- | --- |
 | `list` | `action` | Known groups, result-delivery state, and complete extension usage totals. |
-| `status` | `action`, `taskId` | Group/item state, result-delivery state, resolved configuration, diagnostics, and usage. |
+| `status` | `action`, `taskId` | Group/item state and activity, result-delivery state, resolved configuration, diagnostics, and usage. |
 | `result` | `action`, `taskId` | Retained output or log page. |
 | `cancel` | `action`, `taskId` | Cancel active processes and queued items. |
 
@@ -179,6 +179,26 @@ Configuration is reread on each call. Only user configuration is loaded; project
 ```
 
 Pages include their starting `cursor`, `view`, `nextCursor`, `totalBytes`, task `state`, and `truncated` flag. Continue with the returned `nextCursor` until it is `null`. Use returned offsets rather than splitting UTF-8 characters yourself. Very small pages may expand to one whole character. A running log is a changing snapshot: read from cursor 0; after completion it can be paged stably.
+
+### Activity inspection
+
+Each child item in foreground/background result details and `status`/`cancel` results exposes:
+
+| Field | Meaning |
+| --- | --- |
+| `startedAt` | Unix epoch milliseconds immediately before runner invocation, after slot acquisition and task/config preparation. Absent until actually started. |
+| `finishedAt` | Unix epoch milliseconds after the runner settles, including runner cleanup. Absent while running and for items never started. |
+| `elapsedMs` | Nonnegative runtime from `startedAt` to the current snapshot, or to `finishedAt` after completion. Absent for queued, skipped, or cancelled-before-start items. |
+| `currentTool` | Name of the most recently started tool that has not ended, based on child execution events. Absent when no tool is active and in all terminal states. No tool arguments/results are included. |
+| `lastEventAt` | Parent receive time of the latest parsed child JSONL event, in Unix epoch milliseconds. Absent before any event; it is **not a heartbeat or proof of process health**. |
+
+Concurrent/nested tools are tracked by call ID; an older tool finishing does not clear a newer active tool. If the newest tool ends first, `currentTool` returns to the latest remaining active one. This field is a compact activity hint, not a complete tool trace. Execution-start events can precede validation, approval, or queue waits for nested calls; they do not prove that the tool implementation is currently executing. Duplicate starts and unmatched ends do not replace active activity. Stderr bytes alone do not update `lastEventAt`.
+
+`list` keeps its group metadata and adds a lightweight `results` array with each item's `itemId`, `agent`, `state`, optional chain `step`, and activity fields above. The existing group-level `startedAt` remains the **admission** time, not a child runtime start. Query snapshots are detached; elapsed time freezes after completion. High-frequency text/tool progress updates are coalesced without dropping accounting records.
+
+In interactive TUI mode, **`/subagents`** opens a local, read-only live view of active/queued items and retained completions, with group IDs, item numbers, start times, runtimes, current tools, last-event ages, and extension usage. Active groups come first. The footer links to this command while work is active or queued, and tool-result rendering includes item activity.
+
+Use the configured select up/down and page-up/page-down keys to scroll; select cancel/confirm or interrupt closes the view (defaults: arrows, Page Up/Page Down, Escape/Enter/Ctrl+C). Opening, scrolling, refreshing, or closing it does not start a model turn, read retained reports/logs, consume completion reminders, or change usage/result-delivery state. Independent background completion notifications retain their existing wakeup behavior. The view shares the session watcher rather than starting a separate refresh timer; refreshing stops once work and pending reminders settle. Tree navigation and session shutdown close it. RPC/JSON/print modes do not construct terminal components; use `subagent_task` list/status there.
 
 ### Result delivery
 
@@ -215,7 +235,7 @@ Shell tools, unknown custom tools, and MCP loadouts are treated as potentially w
 
 The extension ledger is authoritative for reported child calls. **Pi's native `/session` and footer do not include this extension's child usage.** `list` reports session totals; status/rendering expose group/item totals. Queries, progress, and notifications do not charge usage again.
 
-The TUI extension footer counts child items, not `subagent` calls/task groups. `active` includes running and cancelling items; `queued` is shown separately and includes items waiting for a process slot and future chain steps. Completed, failed, cancelled, and skipped items no longer contribute to either count.
+The TUI extension footer counts child items, not `subagent` calls/task groups. `active` includes running and cancelling items; `queued` is shown separately and includes items waiting for a process slot and future chain steps. Completed, failed, cancelled, and skipped items no longer contribute to either count. While items are active/queued, the footer includes the `/subagents` inspection entry point.
 
 Usage includes reported model, tool-embedded model, and compaction usage. Reasoning/cache-write subsets are not double-counted. Failed/cancelled tasks retain known usage. Hard kills/protocol failures can leave server usage unreported: `usageComplete: false` means the total is incomplete, not free. Absolute ledger snapshots persist on completion/normal shutdown; reload/resume restores accounting only.
 
@@ -226,6 +246,7 @@ Artifacts live under a system temporary `pi-subagent-session-*` directory (0700;
 | Log per item | 1 MiB |
 | Output per item | 256 KiB |
 | Protocol event / display cache | 1 MiB each |
+| Active tool activity | 256 calls / 1 MiB of call IDs and names |
 | Combined model-visible foreground result | About 50 KiB |
 | Result query page | At most 50 KiB |
 | Retained completed groups | 16 |

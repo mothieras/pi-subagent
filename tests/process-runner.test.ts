@@ -118,6 +118,68 @@ async function gone(pid: number) {
 	return false;
 }
 
+test("activity follows actual overlapping tool execution, not tool-call declarations", async (t) => {
+	const f = fixture(t); const updates: SingleResult[] = [];
+	const records = [
+		end(assistant("", 10, { content: [{ type: "toolCall", id: "one", name: "read", arguments: {} }] })),
+		{ type: "tool_execution_start", toolCallId: "one", toolName: "read", args: { path: "private" } },
+		{ type: "tool_execution_start", toolCallId: "one/1", parentToolCallId: "one", toolName: "grep" },
+		{ type: "tool_execution_start", toolCallId: "two", toolName: "find" },
+		{ type: "tool_execution_end", toolCallId: "one/1", toolName: "grep" },
+		{ type: "tool_execution_end", toolCallId: "two", toolName: "find" },
+		{ type: "tool_execution_update", toolCallId: "one", toolName: "read", partialResult: {} },
+		{ type: "tool_execution_end", toolCallId: "one", toolName: "read", isError: true },
+	];
+	const before = Date.now();
+	const final = await f.run("normal", { records }, {}, (value) => updates.push(value));
+	assert.deepEqual(updates.map((value) => value.currentTool), [undefined, undefined, undefined, "read", "grep", "find", "find", "read", "read", undefined]);
+	assert.equal(final.state, "completed"); assert.equal(final.currentTool, undefined);
+	assert.ok(final.lastEventAt! >= before && final.lastEventAt! <= Date.now());
+	assert.ok(updates.slice(1).every((value) => typeof value.lastEventAt === "number"));
+	assert.equal(final.usage.input, 10); assert.equal(final.usage.turns, 1);
+});
+for (const mode of ["normal", "raw", "graceful"]) test(`terminal ${mode} clears unfinished tool activity`, async (t) => {
+	const f = fixture(t); const updates: SingleResult[] = [];
+	const running = f.run(mode, { records: [{ type: "tool_execution_start", toolCallId: "one", toolName: "read" }],
+		...(mode === "raw" ? { raw: Buffer.from("not-json\n").toString("base64") } : {}) }, {}, (value) => {
+		updates.push(value);
+		if (mode === "graceful" && value.currentTool) f.controller.abort();
+	});
+	const final = await running;
+	assert.ok(updates.some((value) => value.currentTool === "read"));
+	assert.equal(final.currentTool, undefined); assert.equal(typeof final.lastEventAt, "number");
+	assert.equal(final.state, mode === "normal" ? "completed" : mode === "raw" ? "failed" : "cancelled");
+});
+test("duplicate starts and unmatched ends do not replace current activity", async (t) => {
+	const f = fixture(t); const updates: SingleResult[] = [];
+	const final = await f.run("normal", { records: [
+		{ type: "tool_execution_start", toolCallId: "one", toolName: "read" },
+		{ type: "tool_execution_start", toolCallId: "two", toolName: "grep" },
+		{ type: "tool_execution_start", toolCallId: "one", toolName: "read" },
+		{ type: "tool_execution_end", toolCallId: "unknown" },
+		{ type: "tool_execution_end", toolCallId: "two" },
+	] }, {}, (value) => updates.push(value));
+	assert.deepEqual(updates.slice(2).map((value) => value.currentTool), ["read", "grep", "grep", "grep", "read"]);
+	assert.equal(final.currentTool, undefined);
+});
+test("active tool tracking is bounded by count and retained UTF-8 bytes", async (t) => {
+	for (const [count, name, options] of [[257, "read", {}], [3, "x".repeat(100), { maxMessageBytes: 256 }]] as const) {
+		const f = fixture(t);
+		const final = await f.run("normal", { records: Array.from({ length: count }, (_, index) => ({ type: "tool_execution_start", toolCallId: String(index), toolName: name })) }, options);
+		assert.equal(final.state, "failed"); assert.equal(final.currentTool, undefined);
+		assert.match(final.errorMessage!, /tool activity exceeds display limit/); assert.equal(final.usageComplete, false);
+	}
+});
+test("high-frequency tool updates coalesce display snapshots but retain the latest event", async (t) => {
+	const f = fixture(t); const updates: SingleResult[] = [];
+	const records = [{ type: "tool_execution_start", toolCallId: "one", toolName: "read" },
+		...Array.from({ length: 1000 }, () => ({ type: "tool_execution_update", toolCallId: "one", toolName: "read" }))];
+	const final = await f.run("normal", { records }, { updateIntervalMs: 1000 }, (value) => updates.push(value));
+	assert.equal(final.state, "completed"); assert.equal(final.currentTool, undefined);
+	assert.ok(updates.length < 20, `Expected coalesced updates, got ${updates.length}`);
+	assert.ok(final.lastEventAt! >= updates.at(-1)!.lastEventAt!);
+});
+
 test("invocation is isolated, honors resolved tools, passes config privately and protects positional tasks", async (t) => {
 	for (const text of ["--model untrusted", "@not-a-real-file"]) {
 		const f = fixture(t, { task: text });
