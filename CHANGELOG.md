@@ -4,6 +4,8 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-15
+
 ### Added
 
 - Lightweight child activity snapshots (`startedAt`, `finishedAt`, `elapsedMs`, `currentTool`, `lastEventAt`) in task results and management queries, with queue-free runtime and terminal cleanup. The TUI adds a read-only live `/subagents` inspection view, a footer entry point, and activity in tool-result rendering; inspection never starts a model turn or changes result delivery/accounting.
@@ -78,7 +80,8 @@ User-visible changes are recorded here. `Unreleased` describes changes in the cu
 - Session-local background tasks, paginated results, cancellation, write-collision checks, retention limits, and snapshot-based child usage accounting.
 - Optional role/workflow examples, Plan Mode companion, and versioned installation/rollback guidance.
 
-[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/mothieras/pi-subagent/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/mothieras/pi-subagent/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/mothieras/pi-subagent/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/mothieras/pi-subagent/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/mothieras/pi-subagent/compare/v0.1.2...v0.1.3
